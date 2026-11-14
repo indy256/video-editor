@@ -171,7 +171,7 @@ void EditorWindow::openMedia(const QUrl &source, const QString &title, qint64 du
     player_->stop();
     timeline_->setDuration(duration);
     title_->setText(title); title_->setToolTip(title);
-    player_->setSource(source); player_->play();
+    player_->setSource(source); player_->pause();
     refreshSelection();
 }
 void EditorWindow::openYouTube() {

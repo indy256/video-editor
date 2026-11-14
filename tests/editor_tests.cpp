@@ -194,9 +194,18 @@ private slots:
         QVERIFY(!jobs.busy()); QVERIFY(QFileInfo(destination).size() > 7);
     }
     void windowWorkflow() {
-        EditorWindow window; window.show(); window.openFile(source);
+        EditorWindow window; window.show();
+        auto *player = window.findChild<QMediaPlayer *>(); QVERIFY(player);
+        auto *video = window.findChild<QVideoWidget *>(); QVERIFY(video);
+        QSignalSpy states(player, &QMediaPlayer::playbackStateChanged);
+        window.openFile(source);
         auto *timeline = window.findChild<Timeline *>(); QVERIFY(timeline);
         QTRY_VERIFY_WITH_TIMEOUT(timeline->duration() > 0, 10000);
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+        QTRY_VERIFY_WITH_TIMEOUT(video->videoSink()->videoFrame().isValid(), 10000);
+        QTest::qWait(150);
+        QCOMPARE(player->position(), 0);
+        for (const auto &state : states) QVERIFY(state.first().value<QMediaPlayer::PlaybackState>() != QMediaPlayer::PlayingState);
         QPushButton *save = nullptr;
         for (auto *button : window.findChildren<QPushButton *>()) if (button->text() == "Save selection") save = button;
         QVERIFY(save); QVERIFY(save->isEnabled());
