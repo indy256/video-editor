@@ -15,6 +15,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QShortcut>
+#include <QSettings>
 #include <QSlider>
 #include <QStandardPaths>
 #include <QStyle>
@@ -195,13 +196,18 @@ void EditorWindow::saveSelection() {
     if (!save_->isEnabled()) return;
     const auto mode = exportMode_->currentIndex() == 0 ? ExportMode::PreciseMp4 : ExportMode::OriginalStreams;
     const QString extension = mode == ExportMode::OriginalStreams ? ".mkv" : ".mp4";
-    QString path = QFileDialog::getSaveFileName(this, "Save selection", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) + "/v" + extension,
+    QSettings settings;
+    const QString movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    QString directory = settings.value("export/directory", movies).toString();
+    if (!QDir(directory).exists()) directory = movies;
+    QString path = QFileDialog::getSaveFileName(this, "Save selection", QDir(directory).filePath("v" + extension),
         mode == ExportMode::OriginalStreams ? "Matroska video (*.mkv)" : "MP4 video (*.mp4)");
     if (path.isEmpty()) return;
     if (!path.endsWith(extension, Qt::CaseInsensitive)) {
         path += extension;
         if (QFileInfo::exists(path) && QMessageBox::question(this, "Replace file?", "Replace " + path + "?") != QMessageBox::Yes) return;
     }
+    settings.setValue("export/directory", QFileInfo(path).absolutePath());
     if (youtubePage_.isEmpty()) jobs_.exportClip(player_->source().toLocalFile(), timeline_->start(), timeline_->end(), path, mode);
     else jobs_.exportYouTube(youtubePage_, timeline_->start(), timeline_->end(), path, mode);
 }

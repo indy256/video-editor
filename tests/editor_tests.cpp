@@ -94,7 +94,7 @@ private slots:
         if (failed.count()) qWarning() << failed.first().first();
         QCOMPARE(failed.count(), 0); QCOMPARE(saved.count(), 1); QVERIFY(!jobs.busy());
         QProcess probe;
-        probe.start("ffprobe", {"-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,profile,level,pix_fmt", "-of", "json", destination});
+        probe.start("ffprobe", {"-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,codec_tag_string,profile,pix_fmt", "-of", "json", destination});
         QVERIFY(probe.waitForFinished(10000)); QCOMPARE(probe.exitCode(), 0);
         auto metadata = QJsonDocument::fromJson(probe.readAllStandardOutput()).object();
         double duration = metadata.value("format").toObject().value("duration").toString().toDouble();
@@ -106,9 +106,9 @@ private slots:
                 QCOMPARE(info.value("codec_name").toString(), QString("aac"));
             } else if (info.value("codec_type").toString() == "video") {
                 hasVideo = true;
-                QCOMPARE(info.value("codec_name").toString(), QString("h264"));
+                QCOMPARE(info.value("codec_name").toString(), QString("hevc"));
                 QCOMPARE(info.value("profile").toString(), QString("Main"));
-                QCOMPARE(info.value("level").toInt(), 31);
+                QCOMPARE(info.value("codec_tag_string").toString(), QString("hvc1"));
                 QCOMPARE(info.value("pix_fmt").toString(), QString("yuv420p"));
             }
         }
