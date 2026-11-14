@@ -152,7 +152,7 @@ void MediaJobs::writeOutput(const QStringList &inputs, const QString &audioMap) 
     // Retain the preceding video keyframe, but discard audio seek preroll so a
     // coarse audio index cannot shift video later than the start of the clip.
     if (copiesOriginalStreams()) arguments += QStringList{"-c", "copy", "-copypriorss:v", "1", "-copypriorss:a", "0", "-avoid_negative_ts", "make_zero", "-f", "matroska"};
-    else arguments += QStringList{"-c:v", "libx265", "-preset", "slow", "-crf", "32", "-pix_fmt", "yuv420p", "-profile:v", "main", "-tag:v", "hvc1", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"};
+    else arguments += QStringList{"-c:v", "libx264", "-preset", "slow", "-crf", "32", "-pix_fmt", "yuv420p", "-profile:v", "main", "-tag:v", "avc1", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"};
     arguments += QStringList{"-progress", "pipe:1", "-nostats", staging_};
     startProcess(Operation::Export, findTool("ffmpeg"), arguments,
         copiesOriginalStreams() ? "Copying original video and audio streams..." : "Fetching and encoding selection...", 0);

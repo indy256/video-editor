@@ -106,9 +106,9 @@ private slots:
                 QCOMPARE(info.value("codec_name").toString(), QString("aac"));
             } else if (info.value("codec_type").toString() == "video") {
                 hasVideo = true;
-                QCOMPARE(info.value("codec_name").toString(), QString("hevc"));
+                QCOMPARE(info.value("codec_name").toString(), QString("h264"));
                 QCOMPARE(info.value("profile").toString(), QString("Main"));
-                QCOMPARE(info.value("codec_tag_string").toString(), QString("hvc1"));
+                QCOMPARE(info.value("codec_tag_string").toString(), QString("avc1"));
                 QCOMPARE(info.value("pix_fmt").toString(), QString("yuv420p"));
             }
         }
