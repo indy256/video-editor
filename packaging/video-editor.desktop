@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Video Editor
+Comment=Select and export video clips
+Exec=VideoEditor %f
+Icon=video-editor
+Terminal=false
+Categories=AudioVideo;Video;Qt;
+MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;

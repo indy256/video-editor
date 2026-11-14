@@ -26,16 +26,42 @@ The default export filename is `v.mp4` for Precise MP4 or `v.mkv` for Original s
 The default build uses `C:\Qt\6.11.2\msvc2022_arm64`, Visual Studio's ARM64 compiler, and CMake/Ninja in `C:\Qt\Tools`.
 
 ```powershell
-# Download current, checksum-verified yt-dlp and Deno into this project's tools folder.
+# Requires Python 3.12+. Download checksum-verified FFmpeg, ffprobe, yt-dlp and Deno.
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-tools.ps1
-# FFmpeg must be on PATH or in tools (this machine has C:\util\ffmpeg.exe).
 powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -Test
 .\dist\VideoEditor.exe
 ```
 
 Override `-QtRoot` and `-ToolsRoot` for another compatible MSVC Qt kit. For x64 helper programs use `scripts\setup-tools.ps1 -Architecture x64`. CMake requires Widgets, Multimedia, MultimediaWidgets, Network and Test. Open `CMakeLists.txt` in Qt Creator to develop with a matching kit.
 
-The app searches `tools` beside its executable, its executable directory, then PATH for helpers. `VIDEO_EDITOR_FFMPEG` and `VIDEO_EDITOR_YT_DLP` can override their paths. Deno sits beside yt-dlp to provide YouTube's required JavaScript runtime. The build bundles helper programs from the project's `tools` directory, falling back to PATH. No machine-wide tool installation is changed. Update project helpers with `setup-tools.ps1` and rebuild when YouTube changes.
+The app searches `tools` beside its executable, its executable directory, then PATH for helpers. `VIDEO_EDITOR_FFMPEG`, `VIDEO_EDITOR_YT_DLP` and `VIDEO_EDITOR_DENO` can override their paths. The app passes Deno's location to yt-dlp so packaged YouTube support works without adding helpers to PATH. The build bundles helper programs from the project's `tools` directory, falling back to PATH. No machine-wide tool installation is changed. Update project helpers with `setup-tools.ps1` and rebuild when YouTube changes.
+
+## Automated builds and packages
+
+[CMake build](.github/workflows/build.yml), adapted from [video-player](https://github.com/indy256/video-player/blob/main/.github/workflows/build.yml), runs on pushes, pull requests and manual dispatches. It builds and tests these targets:
+
+| Target | Download |
+| --- | --- |
+| Windows x64 | `ve-windows-x64.exe` |
+| Windows ARM64 | `ve-windows-arm64.exe` |
+| macOS ARM64 | `ve-macos-arm64.dmg` |
+| Linux x64 | `ve-linux-x64.AppImage` |
+
+Windows downloads are single portable executables that extract their runtime to a per-user cache on first launch. macOS downloads contain `VideoEditor.app`; Linux downloads are executable AppImages. Each includes Qt's multimedia backend, FFmpeg, yt-dlp and Deno. Windows ARM64 uses an x64 FFmpeg CLI under emulation and native ARM64 libraries for playback. Helper downloads are verified against upstream SHA-256 digests; FFmpeg build notes and licensing are included in the package.
+
+CI rebuilds Qt from checksum-verified sources with LTO, caches it by Qt version and compiler identity, and checks the LTO manifest before building the editor. Release application and portable launcher builds also use LTO and size optimizations. Failed test logs are retained as artifacts. Packaged applications must re-encode a short clip and decode its first frame with system-only PATH settings before upload. Pushing a `vX.Y.Z` tag publishes all four packages as a GitHub release after every build succeeds.
+
+For a local CMake build on any supported platform, use a Qt kit with Widgets, Multimedia, MultimediaWidgets and Network, plus Test when running tests. Set up a native compiler and Ninja on PATH, then run:
+
+```sh
+python scripts/setup-tools.py
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/Qt -DBUILD_TESTING=ON -DVIDEO_EDITOR_DEPLOY=ON
+cmake --build build --parallel 2
+ctest --test-dir build --output-on-failure
+cmake --install build --prefix package
+```
+
+Add the `tools` and Qt `bin` directories to PATH for local tests. `-DVIDEO_EDITOR_TOOLS_DIR=/path/to/helpers` selects another helper directory for deployment. `-DVIDEO_EDITOR_REQUIRE_QT_LTO=ON` requires a kit produced by `scripts/build-qt-lto.py`; ordinary local builds can use an installed Qt kit. `-DVIDEO_EDITOR_OPTIMIZE_SIZE=OFF` disables application LTO and size optimizations. Python build-script checks run with `python -m unittest discover -s tests -p "test_*.py"`.
 
 The downloader ignores global yt-dlp configuration and processes one video per link. Public, finite videos are the intended input. Streaming rejects live videos and videos without a known duration. If a combined preview is unavailable, choose Download first. Stream URLs expire; reopen the link if playback stops after an extended session. Export always resolves fresh URLs. Streaming requires an internet connection while playing, seeking, and saving; Download first requires temporary disk space for the entire source video.
 

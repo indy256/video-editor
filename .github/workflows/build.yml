@@ -1,0 +1,311 @@
+name: CMake build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            qt-version: '6.8.3'
+            qt-host: linux
+            qt-arch: linux_gcc_64
+            artifact-path: dist/ve-linux-x64.AppImage
+          - os: windows-latest
+            # aqt 3.3.0 cannot read Qt 6.11's reorganized windows_x86 repository.
+            # https://github.com/miurahr/aqtinstall/issues/1007
+            qt-version: '6.10.3'
+            qt-host: windows
+            qt-arch: win64_msvc2022_64
+            msvc-arch: x64
+            artifact-path: dist/ve-windows-x64.exe
+          - os: windows-11-vs2026-arm
+            qt-version: '6.11.2'
+            qt-host: windows_arm64
+            qt-arch: win64_msvc2022_arm64
+            msvc-arch: arm64
+            artifact-path: dist/ve-windows-arm64.exe
+          - os: macos-latest
+            qt-version: '6.11.2'
+            qt-host: mac
+            qt-arch: clang_64
+            artifact-path: dist/ve-macos-arm64.dmg
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ffmpeg xvfb xauth libopengl0 libglvnd0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 \
+            libgl1-mesa-dev libegl1-mesa-dev libx11-xcb-dev libxcb-cursor-dev \
+            libxcb-icccm4-dev libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev \
+            libxcb-render-util0-dev libxcb-shape0-dev libxcb-shm0-dev libxcb-sync-dev \
+            libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev libxkbcommon-x11-dev \
+            libfontconfig1-dev libfreetype6-dev libdbus-1-dev libpulse-dev libva-dev \
+            libdrm-dev libssl-dev libudev-dev libxext-dev libxrandr-dev
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/setup-msvc.ps1 -Architecture ${{ matrix.msvc-arch }}
+
+      - name: Install Qt and multimedia backend
+        # v4.4 uses $/action, which some hosted runners reject when parsing cleanup steps.
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+        with:
+          version: ${{ matrix.qt-version }}
+          host: ${{ matrix.qt-host }}
+          arch: ${{ matrix.qt-arch }}
+          modules: qtmultimedia qtshadertools
+          cache: true
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Install Python for build tools
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Download and verify standalone helpers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/setup-tools.py
+
+      - name: Test build scripts
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Identify Qt toolchain
+        id: qt-toolchain
+        shell: python {0}
+        run: |
+          import hashlib, os, shutil, subprocess
+          compiler = shutil.which('cl' if os.name == 'nt' else 'c++')
+          with open(compiler, 'rb') as source:
+              identity = hashlib.file_digest(source, 'sha256').hexdigest()
+          identity += os.environ.get('VCToolsVersion', '') + os.environ.get('WindowsSDKVersion', '')
+          if os.environ['RUNNER_OS'] == 'macOS':
+              identity += subprocess.check_output(['xcrun', '--show-sdk-version'], text=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('key=' + hashlib.sha256(identity.encode()).hexdigest() + '\n')
+
+      - name: Restore Qt built with LTO
+        id: qt-lto
+        uses: actions/cache/restore@v5
+        with:
+          path: .qt-lto
+          key: qt-lto-${{ runner.os }}-${{ runner.arch }}-${{ matrix.qt-version }}-${{ steps.qt-toolchain.outputs.key }}-${{ hashFiles('scripts/build-qt-lto.py', 'scripts/qt-source-hashes.json', 'scripts/qt-mingw-lto.cmake', 'scripts/qt-mingw-avx.s') }}
+
+      - name: Build Qt modules with LTO
+        if: steps.qt-lto.outputs.cache-hit != 'true'
+        shell: python {0}
+        env:
+          QT_SOURCE_VERSION: ${{ matrix.qt-version }}
+        run: |
+          import os, pathlib, subprocess, sys
+          subprocess.run([
+              sys.executable, 'scripts/build-qt-lto.py', '--version', os.environ['QT_SOURCE_VERSION'],
+              '--seed', os.environ['QT_ROOT_DIR'], '--work', os.environ['RUNNER_TEMP'] + '/qt-lto',
+              '--install', str(pathlib.Path('.qt-lto').resolve()), '--parallel', '2',
+              '--toolchain', 'msvc' if os.name == 'nt' else 'native',
+              '--arch', os.environ['RUNNER_ARCH'].lower(),
+          ], check=True)
+
+      - name: Cache completed Qt source build
+        if: steps.qt-lto.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .qt-lto
+          key: ${{ steps.qt-lto.outputs.cache-primary-key }}
+
+      - name: Select Qt built with LTO
+        shell: python {0}
+        run: |
+          import json, os, pathlib
+          root = pathlib.Path('.qt-lto').resolve()
+          seed = pathlib.Path(os.environ['QT_ROOT_DIR']).resolve()
+          manifest = json.loads((root / 'lto-build.json').read_text())
+          assert all(item['lto'] for item in manifest['modules'].values())
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              for key in ('QT_ROOT_DIR', 'QTDIR', 'CMAKE_PREFIX_PATH'):
+                  output.write(f'{key}={root.as_posix()}\n')
+              output.write(f'QT_PLUGIN_PATH={root.as_posix()}/plugins\n')
+              for key in ('QML_IMPORT_PATH', 'QML2_IMPORT_PATH'):
+                  output.write(f'{key}={root.as_posix()}/qml\n')
+              # The install action's seed libraries must not override the new
+              # kit's RUNPATH during application builds and playback tests.
+              for key in ('LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH', 'PKG_CONFIG_PATH'):
+                  if key in os.environ:
+                      paths = [p for p in os.environ[key].split(os.pathsep)
+                               if p and not pathlib.Path(p).resolve().is_relative_to(seed)]
+                      output.write(f'{key}={os.pathsep.join(paths)}\n')
+          with open(os.environ['GITHUB_PATH'], 'a') as output:
+              output.write(str(root / 'bin') + '\n')
+
+      - name: Configure
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="$PWD/.qt-lto" -DVIDEO_EDITOR_REQUIRE_QT_LTO=ON
+          -DBUILD_TESTING=ON -DVIDEO_EDITOR_DEPLOY=ON
+          -DVIDEO_EDITOR_VERSION="$RELEASE_VERSION"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Test playback, selection, exports, streaming and cache
+        run: ctest --test-dir build -C Release --output-on-failure --timeout 300
+
+      - name: Upload test failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            build/Testing/Temporary/
+            build/test-results.txt
+          if-no-files-found: ignore
+
+      - name: Package Windows application and runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ARTIFACT_PATH: ${{ matrix.artifact-path }}
+        run: |
+          cmake --install build --config Release --prefix "$env:GITHUB_WORKSPACE/package"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = 'package/bin/VideoEditor.exe'
+          $headers = & dumpbin /HEADERS $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $machine = if ($env:RUNNER_ARCH -eq 'ARM64') { 'AA64' } else { '8664' }
+          if (-not ($headers -match "(?i)\b$machine machine")) { throw 'Wrong executable architecture' }
+          foreach ($pattern in @('package/bin/Qt6Multimedia.dll', 'package/bin/avcodec-*.dll', 'package/bin/avformat-*.dll')) {
+            if (-not (Test-Path $pattern)) { throw "Missing runtime: $pattern" }
+          }
+          foreach ($tool in @('ffmpeg', 'yt-dlp', 'deno')) {
+            if (-not (Test-Path "package/bin/tools/$tool.exe")) { throw "Missing helper: $tool" }
+          }
+          if (-not (Get-ChildItem package -Recurse -Filter ffmpegmediaplugin.dll)) { throw 'Missing FFmpeg backend' }
+          # Ship the application-local MSVC runtime instead of requiring an installer.
+          $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
+          $crt = Get-ChildItem (Join-Path $env:VCToolsRedistDir $arch) -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
+          if (-not $crt) { throw 'MSVC redistributable DLL directory not found' }
+          Copy-Item (Join-Path $crt.FullName '*.dll') package/bin
+          New-Item -ItemType Directory -Force dist | Out-Null
+          cmake -S packaging/windows -B build/portable -G Ninja -DCMAKE_BUILD_TYPE=Release "-DRUNTIME_DIR=$env:GITHUB_WORKSPACE/package"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/portable --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item build/portable/VideoEditor.exe $env:ARTIFACT_PATH
+          $dependencies = & dumpbin /DEPENDENTS $env:ARTIFACT_PATH
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($dependencies -match '(?i)(Qt6|avcodec|avformat|VCRUNTIME|MSVCP|libgcc|libstdc\+\+)') { throw 'Portable launcher requires a non-system DLL' }
+          ./scripts/test-portable.ps1 -Executable $env:ARTIFACT_PATH
+
+      - name: Package macOS application
+        if: runner.os == 'macOS'
+        run: |
+          cmake --install build --config Release --prefix "$PWD/package"
+          test -d package/VideoEditor.app
+          for tool in ffmpeg yt-dlp deno; do
+            test -x "package/VideoEditor.app/Contents/MacOS/tools/$tool"
+          done
+          find package/VideoEditor.app -iname '*ffmpeg*' | grep -q .
+          ffmpeg -v error -f lavfi -i 'testsrc2=size=160x90:rate=10' -t 1 -c:v mpeg4 -y build/runtime-check.mp4
+          env -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u DYLD_LIBRARY_PATH \
+            PATH=/usr/bin:/bin package/VideoEditor.app/Contents/MacOS/VideoEditor --runtime-check build/runtime-check.mp4
+          mkdir -p dist
+          hdiutil create -volname 'Video Editor' -srcfolder package -ov -format UDZO dist/ve-macos-arm64.dmg
+
+      - name: Build Linux AppImage
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          ARCH: x86_64
+        run: |
+          cmake --install build --prefix "$PWD/AppDir/usr"
+          if find AppDir -name 'libc.so.*' -o -name 'ld-linux*.so.*' -o -name 'libpthread.so.*' | grep -q .; then
+            echo 'AppImage must use the host glibc and ELF loader'
+            exit 1
+          fi
+          test -n "$(find AppDir -name '*ffmpegmediaplugin.so' -print -quit)"
+          test -n "$(find AppDir -name 'libavcodec.so.*' -print -quit)"
+          while IFS= read -r -d '' binary; do
+            dependencies=$(LD_LIBRARY_PATH="$PWD/AppDir/usr/lib" ldd "$binary")
+            if [[ "$dependencies" == *'not found'* ]]; then
+              printf 'Unresolved dependencies in %s:\n%s\n' "$binary" "$dependencies"
+              exit 1
+            fi
+          done < <(find AppDir -type f \( -name '*.so' -o -name '*.so.*' -o -name VideoEditor \) -print0)
+          for tool in ffmpeg yt-dlp deno; do
+            test -x "AppDir/usr/bin/tools/$tool"
+          done
+          cp packaging/AppRun AppDir/AppRun
+          cp packaging/video-editor.desktop AppDir/
+          cp packaging/video-editor.svg AppDir/
+          chmod +x AppDir/AppRun
+          curl -fL --retry 3 -o appimagetool.AppImage https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool.AppImage
+          curl -fL --retry 5 --retry-all-errors -o appimage-runtime https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  appimage-runtime' | sha256sum -c -
+          mkdir -p dist
+          ./appimagetool.AppImage --runtime-file appimage-runtime AppDir dist/ve-linux-x64.AppImage
+          chmod 755 dist/ve-linux-x64.AppImage
+          ffmpeg -v error -f lavfi -i 'testsrc2=size=160x90:rate=10' -t 1 -c:v mpeg4 -y build/runtime-check.mp4
+          xvfb-run -a env -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u LD_LIBRARY_PATH \
+            PATH=/usr/bin:/bin QT_QPA_PLATFORM=xcb \
+            dist/ve-linux-x64.AppImage --runtime-check build/runtime-check.mp4
+
+      - name: Upload binary package
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ matrix.artifact-path }}
+          archive: false
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ve-*
+          path: dist
+          merge-multiple: true
+          skip-decompress: true
+
+      - name: Create release and upload packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes
+          fi

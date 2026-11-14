@@ -2,3 +2,9 @@
 /dist/
 /tools/
 *.user
+/.qt-lto/
+/package/
+/AppDir/
+__pycache__/
+*.AppImage
+/appimage-runtime

@@ -22,6 +22,13 @@
 static const QString compatibleFormats = "bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/bv*[height<=1080][vcodec^=vp9]+ba/b[height<=1080][vcodec^=vp9]";
 static const QString previewFormats = "b[height<=1080][vcodec^=avc1][protocol=https]/b[height<=1080][vcodec^=avc1][protocol=http]";
 
+static QStringList downloaderArguments() {
+    QStringList arguments{"--ignore-config", "--no-playlist", "--no-colors"};
+    const auto deno = findTool("deno");
+    if (!deno.isEmpty()) arguments += QStringList{"--js-runtimes", "deno:" + deno};
+    return arguments;
+}
+
 QString findTool(const QString &name) {
     const QString override = qEnvironmentVariable(("VIDEO_EDITOR_" + name.toUpper().replace('-', '_')).toUtf8().constData());
     if (!override.isEmpty()) return QFileInfo::exists(override) ? override : QString();
@@ -86,7 +93,7 @@ void MediaJobs::download(const QString &url) {
     if (tool.isEmpty() || ffmpeg.isEmpty()) { emit failed("YouTube needs yt-dlp and FFmpeg. Place them in the tools folder beside the app, or on PATH."); return; }
     pendingCache_ = std::make_unique<QTemporaryDir>(QDir::tempPath() + "/video-editor-XXXXXX");
     if (!pendingCache_->isValid()) { fail("Could not create the video cache."); return; }
-    startProcess(Operation::Download, tool, {"--ignore-config", "--no-playlist", "--no-colors", "--newline", "--no-mtime",
+    startProcess(Operation::Download, tool, downloaderArguments() + QStringList{"--newline", "--no-mtime",
         "--socket-timeout", "30", "--retries", "2", "--ffmpeg-location", ffmpeg,
         // Qt's bundled FFmpeg can select an AV1 hardware decoder that produces
         // green frames on Windows ARM64; that kit has no software AV1 fallback.
@@ -106,7 +113,7 @@ void MediaJobs::resolve(const QString &url, bool forExport) {
     if (tool.isEmpty()) { fail("yt-dlp was not found. Add it to the tools folder or PATH."); return; }
     ++resolveGeneration_;
     startProcess(forExport ? Operation::ResolveExport : Operation::ResolvePreview, tool,
-        {"--ignore-config", "--no-playlist", "--no-colors", "--skip-download", "--dump-single-json",
+        downloaderArguments() + QStringList{"--skip-download", "--dump-single-json",
         "--socket-timeout", "20", "--retries", "2", "--format", forExport ? compatibleFormats : previewFormats, "--", url.trimmed()},
         forExport ? "Resolving fresh streams for the selected interval..." : "Opening YouTube stream...");
 }
