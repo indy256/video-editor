@@ -1,0 +1,29 @@
+#pragma once
+#include <QWidget>
+
+QString timeText(qint64 ms);
+
+class Timeline : public QWidget {
+    Q_OBJECT
+public:
+    explicit Timeline(QWidget *parent = nullptr);
+    qint64 duration() const { return duration_; }
+    qint64 start() const { return start_; }
+    qint64 end() const { return end_; }
+    void setDuration(qint64 value);
+    void setPosition(qint64 value);
+    void setSelection(qint64 start, qint64 end);
+signals:
+    void selectionChanged(qint64 start, qint64 end);
+    void seekRequested(qint64 position);
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+    void mouseMoveEvent(QMouseEvent *) override;
+    void mouseReleaseEvent(QMouseEvent *) override;
+private:
+    qint64 at(double x) const;
+    int xAt(qint64 value) const;
+    void select(QMouseEvent *event);
+    qint64 duration_ = 0, position_ = 0, start_ = 0, end_ = 0;
+};
