@@ -216,6 +216,8 @@ private slots:
         QVERIFY(exportMode); QCOMPARE(exportMode->count(), 2); exportMode->setCurrentIndex(1); QVERIFY(save->isEnabled());
         auto screenshot = qEnvironmentVariable("VIDEO_EDITOR_SCREENSHOT");
         if (!screenshot.isEmpty()) { QTest::qWait(500); QVERIFY(window.grab().save(screenshot)); }
+        QTest::keyClick(&window, Qt::Key_Escape);
+        QTRY_VERIFY(!window.isVisible());
     }
     void youtubeIntegration() {
         QString url = qEnvironmentVariable("VIDEO_EDITOR_TEST_YOUTUBE");

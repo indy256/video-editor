@@ -13,7 +13,7 @@ Launch `dist\VideoEditor.exe`. Keep the entire `dist` folder together; it contai
 4. Adjust the IN and OUT time fields for precise times. An end before the start disables export. The timeline supports media longer than 24 hours; the time fields are disabled for those files.
 5. Click **Preview selection** to play the interval. Choose **Precise MP4 (re-encode)** or **Original streams (no re-encoding)** in **Save as**, then click **Save selection**.
 
-Space toggles playback when a text/time field is not focused. Ctrl+O opens a local file; Ctrl+S saves the selection. Volume and five-second seek buttons are available below the player. A local filename or YouTube URL may also be passed on the command line.
+Space toggles playback when a text/time field is not focused. Ctrl+O opens a local file; Ctrl+S saves the selection; Esc closes the editor. Volume and five-second seek buttons are available below the player. A local filename or YouTube URL may also be passed on the command line.
 
 **Precise MP4** uses FFmpeg H.264 / AAC encoding with millisecond input times, preserving the first video and optional first audio track. Video uses `libx264 -preset slow -crf 32 -pix_fmt yuv420p -profile:v main -tag:v avc1`, with the encoder selecting the H.264 level automatically; audio uses `aac -b:a 128k`. MP4 output uses `-movflags +faststart`. Re-encoding gives accurate boundaries within video-frame and audio-packet resolution.
 

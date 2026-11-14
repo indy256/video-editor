@@ -147,6 +147,7 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     auto *space = new QShortcut(QKeySequence(Qt::Key_Space), this); connect(space, &QShortcut::activated, this, [this] { if (!url_->hasFocus() && !in_->hasFocus() && !out_->hasFocus()) togglePlayback(); });
     auto *openShortcut = new QShortcut(QKeySequence::Open, this); connect(openShortcut, &QShortcut::activated, this, &EditorWindow::chooseFile);
     auto *saveShortcut = new QShortcut(QKeySequence::Save, this); connect(saveShortcut, &QShortcut::activated, this, &EditorWindow::saveSelection);
+    auto *closeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this); connect(closeShortcut, &QShortcut::activated, this, &QWidget::close);
     refreshSelection();
 }
 void EditorWindow::togglePlayback() {
