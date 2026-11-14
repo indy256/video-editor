@@ -94,13 +94,25 @@ private slots:
         if (failed.count()) qWarning() << failed.first().first();
         QCOMPARE(failed.count(), 0); QCOMPARE(saved.count(), 1); QVERIFY(!jobs.busy());
         QProcess probe;
-        probe.start("ffprobe", {"-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", destination});
+        probe.start("ffprobe", {"-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,profile,level,pix_fmt", "-of", "json", destination});
         QVERIFY(probe.waitForFinished(10000)); QCOMPARE(probe.exitCode(), 0);
         auto metadata = QJsonDocument::fromJson(probe.readAllStandardOutput()).object();
         double duration = metadata.value("format").toObject().value("duration").toString().toDouble();
-        bool hasAudio = false;
-        for (const auto &stream : metadata.value("streams").toArray()) if (stream.toObject().value("codec_type").toString() == "audio") hasAudio = true;
-        QVERIFY(hasAudio);
+        bool hasAudio = false, hasVideo = false;
+        for (const auto &stream : metadata.value("streams").toArray()) {
+            const auto info = stream.toObject();
+            if (info.value("codec_type").toString() == "audio") {
+                hasAudio = true;
+                QCOMPARE(info.value("codec_name").toString(), QString("aac"));
+            } else if (info.value("codec_type").toString() == "video") {
+                hasVideo = true;
+                QCOMPARE(info.value("codec_name").toString(), QString("h264"));
+                QCOMPARE(info.value("profile").toString(), QString("Main"));
+                QCOMPARE(info.value("level").toInt(), 31);
+                QCOMPARE(info.value("pix_fmt").toString(), QString("yuv420p"));
+            }
+        }
+        QVERIFY(hasAudio); QVERIFY(hasVideo);
         QVERIFY2(qAbs(duration - 2.25) < 0.08, qPrintable(QString::number(duration)));
         QMediaPlayer player; QVideoSink sink; player.setVideoSink(&sink); player.setSource(QUrl::fromLocalFile(destination)); player.play();
         QTRY_VERIFY_WITH_TIMEOUT(sink.videoFrame().isValid(), 10000);
@@ -168,12 +180,18 @@ private slots:
     }
     void cancelExportPreservesDestination() {
         QFETCH(bool, copy);
-        MediaJobs jobs; QSignalSpy canceled(&jobs, &MediaJobs::canceled);
+        MediaJobs jobs; QSignalSpy canceled(&jobs, &MediaJobs::canceled), saved(&jobs, &MediaJobs::exported), errors(&jobs, &MediaJobs::failed);
         QString destination = temp.filePath("canceled.mp4"); QFile file(destination); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("keep me"); file.close();
         jobs.exportClip(source, 0, 5000, destination, copy ? ExportMode::OriginalStreams : ExportMode::PreciseMp4); jobs.cancel();
         QTRY_COMPARE_WITH_TIMEOUT(canceled.count(), 1, 10000);
         QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), QByteArray("keep me"));
         QCOMPARE(QDir(temp.path()).entryList({".video-editor-*"}, QDir::Files | QDir::Hidden).count(), 0);
+        file.close();
+        // A canceled job must reset its process state before another export.
+        jobs.exportClip(source, 1000, 2500, destination, copy ? ExportMode::OriginalStreams : ExportMode::PreciseMp4);
+        QTRY_VERIFY_WITH_TIMEOUT(!saved.isEmpty() || !errors.isEmpty(), 30000);
+        QCOMPARE(errors.count(), 0); QCOMPARE(saved.count(), 1); QCOMPARE(canceled.count(), 1);
+        QVERIFY(!jobs.busy()); QVERIFY(QFileInfo(destination).size() > 7);
     }
     void windowWorkflow() {
         EditorWindow window; window.show(); window.openFile(source);

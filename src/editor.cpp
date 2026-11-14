@@ -22,7 +22,6 @@
 #include <QVBoxLayout>
 #include <QVideoWidget>
 #include <QStackedLayout>
-#include <climits>
 
 EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     setWindowTitle("Video Editor"); resize(1120, 820); setMinimumSize(820, 680);
@@ -41,10 +40,11 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     title_ = new QLabel("Your next clip starts here"); title_->setObjectName("title"); title_->setTextFormat(Qt::PlainText); layout->addWidget(title_);
     auto *stage = new QWidget; stage->setObjectName("stage"); stage->setMinimumHeight(220);
     auto *stack = new QStackedLayout(stage);
-    empty_ = new QLabel("Open a video to begin\n\nYouTube links and local video files"); empty_->setAlignment(Qt::AlignCenter); empty_->setObjectName("empty");
-    auto *video = new QVideoWidget; video->setAspectRatioMode(Qt::KeepAspectRatio); stack->addWidget(empty_); stack->addWidget(video); layout->addWidget(stage, 1);
-    player_ = new QMediaPlayer(this); audio_ = new QAudioOutput(this); audio_->setVolume(0.7f);
-    player_->setAudioOutput(audio_); player_->setVideoOutput(video);
+    auto *empty = new QLabel("Open a video to begin\n\nYouTube links and local video files"); empty->setAlignment(Qt::AlignCenter); empty->setObjectName("empty");
+    auto *video = new QVideoWidget; video->setAspectRatioMode(Qt::KeepAspectRatio); stack->addWidget(empty); stack->addWidget(video); layout->addWidget(stage, 1);
+    player_ = new QMediaPlayer(this);
+    auto *audio = new QAudioOutput(this); audio->setVolume(0.7f);
+    player_->setAudioOutput(audio); player_->setVideoOutput(video);
     auto *transport = new QHBoxLayout;
     play_ = new QPushButton("Play"); play_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay)); play_->setEnabled(false);
     auto *back = new QPushButton("-5s"), *forward = new QPushButton("+5s");
@@ -98,7 +98,7 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     connect(play_, &QPushButton::clicked, this, &EditorWindow::togglePlayback);
     connect(save_, &QPushButton::clicked, this, &EditorWindow::saveSelection);
     connect(cancel_, &QPushButton::clicked, &jobs_, &MediaJobs::cancel);
-    connect(volume, &QSlider::valueChanged, this, [this](int v) { audio_->setVolume(v / 100.f); });
+    connect(volume, &QSlider::valueChanged, audio, [audio](int v) { audio->setVolume(v / 100.f); });
     connect(back, &QPushButton::clicked, this, [this] { player_->setPosition(qMax(qint64(0), player_->position() - 5000)); });
     connect(forward, &QPushButton::clicked, this, [this] { player_->setPosition(qMin(player_->duration(), player_->position() + 5000)); });
     connect(seek_, &QSlider::sliderMoved, this, [this](int pos) { previewing_ = false; player_->setPosition(qint64(double(pos) / 1000000 * player_->duration())); });
@@ -133,10 +133,8 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     });
     connect(&jobs_, &MediaJobs::downloaded, this, [this](const QString &path, const QString &title) { setBusy(false); openFile(path, title); });
     connect(&jobs_, &MediaJobs::streamReady, this, [this](const QUrl &url, const QString &title, qint64 duration, int height) {
-        setBusy(false); previewing_ = false; player_->stop();
-        source_ = url.toString(QUrl::FullyEncoded); youtubePage_ = url_->text().trimmed();
-        title_->setText(title); title_->setToolTip(title); timeline_->setDuration(duration);
-        player_->setSource(url); player_->play(); refreshSelection();
+        setBusy(false); youtubePage_ = url_->text().trimmed();
+        openMedia(url, title, duration);
         status_->setText(QString("Streaming preview: %1p. Seek anywhere; Save selection fetches the interval at up to 1080p.").arg(height));
     });
     connect(&jobs_, &MediaJobs::exported, this, [this](const QString &path) {
@@ -151,7 +149,7 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     refreshSelection();
 }
 void EditorWindow::togglePlayback() {
-    if (source_.isEmpty() || !play_->isEnabled()) return;
+    if (player_->source().isEmpty() || !play_->isEnabled()) return;
     previewing_ = false;
     if (player_->isPlaying()) player_->pause(); else player_->play();
 }
@@ -163,9 +161,17 @@ void EditorWindow::chooseFile() {
 void EditorWindow::openFile(const QString &path, const QString &title) {
     if (busy_) return;
     if (!QFileInfo(path).isFile()) { status_->setText("File does not exist: " + path); return; }
-    previewing_ = false; youtubePage_.clear(); player_->stop(); timeline_->setDuration(0); source_ = QFileInfo(path).absoluteFilePath();
-    title_->setText(title.isEmpty() ? QFileInfo(path).fileName() : title); title_->setToolTip(title_->text());
-    player_->setSource(QUrl::fromLocalFile(source_)); player_->play(); status_->setText("Left-click the timeline for IN, right-click for OUT. Choose an export mode and Save selection.");
+    youtubePage_.clear();
+    openMedia(QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath()), title.isEmpty() ? QFileInfo(path).fileName() : title);
+    status_->setText("Left-click the timeline for IN, right-click for OUT. Choose an export mode and Save selection.");
+}
+void EditorWindow::openMedia(const QUrl &source, const QString &title, qint64 duration) {
+    previewing_ = false;
+    player_->stop();
+    timeline_->setDuration(duration);
+    title_->setText(title); title_->setToolTip(title);
+    player_->setSource(source); player_->play();
+    refreshSelection();
 }
 void EditorWindow::openYouTube() {
     if (busy_) return;
@@ -178,7 +184,7 @@ void EditorWindow::refreshSelection() {
     { QSignalBlocker a(in_), b(out_); in_->setTime(QTime::fromMSecsSinceStartOfDay(int(start % 86400000))); out_->setTime(QTime::fromMSecsSinceStartOfDay(int(end % 86400000))); }
     bool valid = end > start && timeline_->duration() > 0;
     selection_->setText(valid ? timeText(end - start) + " selected" : "OUT must be after IN");
-    save_->setEnabled(valid && !busy_ && !source_.isEmpty()); preview_->setEnabled(valid && !busy_);
+    save_->setEnabled(valid && !busy_ && !player_->source().isEmpty()); preview_->setEnabled(valid && !busy_);
 }
 void EditorWindow::setBusy(bool busy) {
     busy_ = busy; open_->setEnabled(!busy); local_->setEnabled(!busy); url_->setEnabled(!busy); loadMode_->setEnabled(!busy);
@@ -186,18 +192,17 @@ void EditorWindow::setBusy(bool busy) {
     progress_->setVisible(busy); cancel_->setVisible(busy); refreshSelection();
 }
 void EditorWindow::saveSelection() {
-    if (!save_->isEnabled() || busy_) return;
-    QString base = youtubePage_.isEmpty() ? QFileInfo(source_).completeBaseName() : "youtube";
+    if (!save_->isEnabled()) return;
     const auto mode = exportMode_->currentIndex() == 0 ? ExportMode::PreciseMp4 : ExportMode::OriginalStreams;
     const QString extension = mode == ExportMode::OriginalStreams ? ".mkv" : ".mp4";
-    QString path = QFileDialog::getSaveFileName(this, "Save selection", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) + "/" + base + "-clip" + extension,
+    QString path = QFileDialog::getSaveFileName(this, "Save selection", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) + "/v" + extension,
         mode == ExportMode::OriginalStreams ? "Matroska video (*.mkv)" : "MP4 video (*.mp4)");
     if (path.isEmpty()) return;
     if (!path.endsWith(extension, Qt::CaseInsensitive)) {
         path += extension;
         if (QFileInfo::exists(path) && QMessageBox::question(this, "Replace file?", "Replace " + path + "?") != QMessageBox::Yes) return;
     }
-    if (youtubePage_.isEmpty()) jobs_.exportClip(source_, timeline_->start(), timeline_->end(), path, mode);
+    if (youtubePage_.isEmpty()) jobs_.exportClip(player_->source().toLocalFile(), timeline_->start(), timeline_->end(), path, mode);
     else jobs_.exportYouTube(youtubePage_, timeline_->start(), timeline_->end(), path, mode);
 }
 void EditorWindow::closeEvent(QCloseEvent *event) {

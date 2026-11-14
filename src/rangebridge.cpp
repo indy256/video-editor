@@ -10,7 +10,6 @@
 #include <QJsonDocument>
 #include <QPointer>
 #include <memory>
-#include <functional>
 #include <algorithm>
 
 RangeBridge::RangeBridge(QObject *parent) : QObject(parent) {

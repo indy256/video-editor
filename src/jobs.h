@@ -37,6 +37,9 @@ signals:
     void failed(const QString &message);
     void canceled();
 private:
+    enum class Operation { Idle, Download, ResolvePreview, ResolveExport, FindKeyframe, Export };
+    void startProcess(Operation operation, const QString &tool, const QStringList &arguments, const QString &message, int percent = -1);
+    void discardOutput();
     void readOutput();
     void finish(int code, QProcess::ExitStatus status);
     void fail(const QString &message);
@@ -44,8 +47,8 @@ private:
     void prepareResolved(QJsonObject info, bool forExport, int attempt = 0, bool rangeProbe = false);
     void useResolved(const QJsonObject &info, bool forExport);
     bool prepareExport(qint64 start, qint64 end, const QString &destination, ExportMode mode);
-    void encode(QStringList inputs, const QString &audioMap);
-    void writeOutput(QStringList inputs, const QString &audioMap);
+    void encode(const QStringList &inputs, const QString &audioMap);
+    void writeOutput(const QStringList &inputs, const QString &audioMap);
     QProcess process_;
     RangeBridge bridge_;
     QNetworkAccessManager probeNetwork_;
@@ -53,7 +56,8 @@ private:
     unsigned resolveGeneration_ = 0;
     std::unique_ptr<QTemporaryDir> cache_, pendingCache_;
     std::vector<std::unique_ptr<QTemporaryDir>> retiredCaches_;
-    QString mode_, destination_, staging_, log_, lines_;
+    Operation operation_ = Operation::Idle;
+    QString destination_, staging_, log_, lines_;
     QByteArray metadata_;
     qint64 exportStart_ = 0;
     qint64 exportDuration_ = 0;

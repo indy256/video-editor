@@ -18,8 +18,8 @@ Timeline::Timeline(QWidget *parent) : QWidget(parent) {
 }
 void Timeline::setDuration(qint64 value) {
     duration_ = std::max(qint64(0), value);
-    start_ = 0; end_ = duration_; position_ = 0;
-    emit selectionChanged(start_, end_); update();
+    position_ = 0;
+    setSelection(0, duration_);
 }
 void Timeline::setPosition(qint64 value) { position_ = value; update(); }
 void Timeline::setSelection(qint64 start, qint64 end) {
@@ -63,10 +63,10 @@ void Timeline::select(QMouseEvent *e) {
     if (!duration_) return;
     qint64 value = at(e->position().x());
     if (e->modifiers() & Qt::ShiftModifier) { emit seekRequested(value); return; }
-    if (e->buttons() & Qt::LeftButton) start_ = value;
-    else if (e->buttons() & Qt::RightButton) end_ = value;
+    if (e->buttons() & Qt::LeftButton) setSelection(value, end_);
+    else if (e->buttons() & Qt::RightButton) setSelection(start_, value);
     else return;
-    emit selectionChanged(start_, end_); emit seekRequested(value); update();
+    emit seekRequested(value);
 }
 void Timeline::mousePressEvent(QMouseEvent *e) { select(e); }
 void Timeline::mouseMoveEvent(QMouseEvent *e) { select(e); }

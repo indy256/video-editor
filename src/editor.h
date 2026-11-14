@@ -2,7 +2,6 @@
 #include <QMainWindow>
 #include "jobs.h"
 class QMediaPlayer;
-class QAudioOutput;
 class QLineEdit;
 class QLabel;
 class QPushButton;
@@ -22,6 +21,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 private:
     void openYouTube();
+    void openMedia(const QUrl &source, const QString &title, qint64 duration = 0);
     void chooseFile();
     void saveSelection();
     void refreshSelection();
@@ -29,16 +29,14 @@ private:
     void togglePlayback();
     MediaJobs jobs_;
     QMediaPlayer *player_;
-    QAudioOutput *audio_;
     Timeline *timeline_;
     QLineEdit *url_;
     QComboBox *loadMode_, *exportMode_;
-    QLabel *title_, *clock_, *selection_, *status_, *empty_;
+    QLabel *title_, *clock_, *selection_, *status_;
     QPushButton *open_, *local_, *save_, *play_, *cancel_, *preview_;
     QProgressBar *progress_;
     QSlider *seek_;
     QTimeEdit *in_, *out_;
-    QString source_;
     QString youtubePage_;
     bool busy_ = false, previewing_ = false;
 };

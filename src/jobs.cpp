@@ -41,7 +41,6 @@ bool isYouTubeUrl(const QString &text) {
         && (host == "youtu.be" || host == "youtube.com" || host.endsWith(".youtube.com"));
 }
 MediaJobs::MediaJobs(QObject *parent) : QObject(parent) {
-    process_.setProcessChannelMode(QProcess::MergedChannels);
     connect(&process_, &QProcess::readyReadStandardOutput, this, &MediaJobs::readOutput);
     connect(&process_, &QProcess::readyReadStandardError, this, [this] {
         log_ = (log_ + QString::fromUtf8(process_.readAllStandardError())).right(12000);
@@ -56,12 +55,29 @@ MediaJobs::~MediaJobs() {
     if (probe_) { disconnect(probe_, nullptr, this, nullptr); probe_->abort(); }
     disconnect(&process_, nullptr, this, nullptr);
     if (process_.state() != QProcess::NotRunning) { process_.kill(); process_.waitForFinished(3000); }
-    if (!staging_.isEmpty()) QFile::remove(staging_);
+    discardOutput();
+}
+void MediaJobs::startProcess(Operation operation, const QString &tool, const QStringList &arguments, const QString &message, int percent) {
+    operation_ = operation;
+    active_ = true;
+    canceled_ = false;
+    log_.clear(); lines_.clear(); metadata_.clear();
+    const bool separate = operation == Operation::ResolvePreview || operation == Operation::ResolveExport || operation == Operation::FindKeyframe;
+    process_.setProcessChannelMode(separate ? QProcess::SeparateChannels : QProcess::MergedChannels);
+    emit progress(percent, message);
+    process_.start(tool, arguments);
+}
+void MediaJobs::discardOutput() {
+    if (!staging_.isEmpty()) {
+        QFile::remove(staging_);
+        staging_.clear();
+    }
+    pendingCache_.reset();
 }
 void MediaJobs::fail(const QString &message) {
     active_ = false;
-    if (!staging_.isEmpty()) { QFile::remove(staging_); staging_.clear(); }
-    pendingCache_.reset(); emit failed(message);
+    discardOutput();
+    emit failed(message);
 }
 void MediaJobs::download(const QString &url) {
     if (busy()) return;
@@ -70,17 +86,15 @@ void MediaJobs::download(const QString &url) {
     if (tool.isEmpty() || ffmpeg.isEmpty()) { emit failed("YouTube needs yt-dlp and FFmpeg. Place them in the tools folder beside the app, or on PATH."); return; }
     pendingCache_ = std::make_unique<QTemporaryDir>(QDir::tempPath() + "/video-editor-XXXXXX");
     if (!pendingCache_->isValid()) { fail("Could not create the video cache."); return; }
-    mode_ = "download"; active_ = true; canceled_ = false; log_.clear(); lines_.clear();
-    process_.setProcessChannelMode(QProcess::MergedChannels);
-    emit progress(-1, "Downloading YouTube video to a temporary cache...");
-    process_.start(tool, {"--ignore-config", "--no-playlist", "--no-colors", "--newline", "--no-mtime",
+    startProcess(Operation::Download, tool, {"--ignore-config", "--no-playlist", "--no-colors", "--newline", "--no-mtime",
         "--socket-timeout", "30", "--retries", "2", "--ffmpeg-location", ffmpeg,
         // Qt's bundled FFmpeg can select an AV1 hardware decoder that produces
         // green frames on Windows ARM64; that kit has no software AV1 fallback.
         // Prefer H.264, then VP9, retaining the best available audio and <=1080p.
         "--format", compatibleFormats, "--merge-output-format", "mkv",
         "--write-info-json", "--progress-template", "download:PROGRESS:%(progress._percent_str)s",
-        "--output", pendingCache_->path() + "/source.%(ext)s", "--", url.trimmed()});
+        "--output", pendingCache_->path() + "/source.%(ext)s", "--", url.trimmed()},
+        "Downloading YouTube video to a temporary cache...");
 }
 void MediaJobs::resolveStream(const QString &url) {
     if (busy()) return;
@@ -90,13 +104,11 @@ void MediaJobs::resolve(const QString &url, bool forExport) {
     if (!isYouTubeUrl(url)) { fail("Enter a valid youtube.com or youtu.be URL."); return; }
     const QString tool = findTool("yt-dlp");
     if (tool.isEmpty()) { fail("yt-dlp was not found. Add it to the tools folder or PATH."); return; }
-    mode_ = forExport ? "resolve-export" : "resolve";
     ++resolveGeneration_;
-    active_ = true; canceled_ = false; log_.clear(); lines_.clear(); metadata_.clear();
-    process_.setProcessChannelMode(QProcess::SeparateChannels);
-    emit progress(-1, forExport ? "Resolving fresh streams for the selected interval..." : "Opening YouTube stream...");
-    process_.start(tool, {"--ignore-config", "--no-playlist", "--no-colors", "--skip-download", "--dump-single-json",
-        "--socket-timeout", "20", "--retries", "2", "--format", forExport ? compatibleFormats : previewFormats, "--", url.trimmed()});
+    startProcess(forExport ? Operation::ResolveExport : Operation::ResolvePreview, tool,
+        {"--ignore-config", "--no-playlist", "--no-colors", "--skip-download", "--dump-single-json",
+        "--socket-timeout", "20", "--retries", "2", "--format", forExport ? compatibleFormats : previewFormats, "--", url.trimmed()},
+        forExport ? "Resolving fresh streams for the selected interval..." : "Opening YouTube stream...");
 }
 bool MediaJobs::prepareExport(qint64 start, qint64 end, const QString &destination, ExportMode mode) {
     if (start < 0 || end <= start || destination.isEmpty()) { fail("Choose an end time after the start time and an output file."); return false; }
@@ -111,25 +123,21 @@ void MediaJobs::exportYouTube(const QString &url, qint64 start, qint64 end, cons
     if (busy() || !prepareExport(start, end, destination, mode)) return;
     resolve(url, true);
 }
-void MediaJobs::encode(QStringList inputs, const QString &audioMap) {
+void MediaJobs::encode(const QStringList &inputs, const QString &audioMap) {
     if (copiesOriginalStreams()) {
         pendingInputs_ = inputs; pendingAudioMap_ = audioMap;
         const auto source = inputs.value(inputs.indexOf("-i") + 1);
-        mode_ = "keyframe"; active_ = true; metadata_.clear(); log_.clear(); lines_.clear();
-        process_.setProcessChannelMode(QProcess::SeparateChannels);
-        emit progress(-1, "Locating the keyframe for an original stream copy...");
         // Use the final copy's demuxer seek and normalized source timestamps to
         // identify its first keyframe without decoding or encoding the video.
-        process_.start(findTool("ffmpeg"), {"-v", "error", "-nostdin", "-copyts", "-start_at_zero", "-ss", QString::number(exportStart_ / 1000.0, 'f', 3),
-            "-rw_timeout", "20000000", "-i", source, "-map", "0:v:0", "-c", "copy", "-frames:v", "1", "-f", "framehash", "pipe:1"});
+        startProcess(Operation::FindKeyframe, findTool("ffmpeg"),
+            {"-v", "error", "-nostdin", "-copyts", "-start_at_zero", "-ss", QString::number(exportStart_ / 1000.0, 'f', 3),
+            "-rw_timeout", "20000000", "-i", source, "-map", "0:v:0", "-c", "copy", "-frames:v", "1", "-f", "framehash", "pipe:1"},
+            "Locating the keyframe for an original stream copy...");
         return;
     }
     writeOutput(inputs, audioMap);
 }
-void MediaJobs::writeOutput(QStringList inputs, const QString &audioMap) {
-    mode_ = "export"; active_ = true; log_.clear(); lines_.clear();
-    process_.setProcessChannelMode(QProcess::MergedChannels);
-    emit progress(0, copiesOriginalStreams() ? "Copying original video and audio streams..." : "Fetching and encoding selection...");
+void MediaJobs::writeOutput(const QStringList &inputs, const QString &audioMap) {
     QStringList arguments = {"-hide_banner", "-nostdin", "-y"};
     arguments += inputs;
     const double duration = (exportStart_ + exportDuration_) / 1000.0 - actualStartUs_ / 1000000.0;
@@ -137,13 +145,14 @@ void MediaJobs::writeOutput(QStringList inputs, const QString &audioMap) {
     // Retain the preceding video keyframe, but discard audio seek preroll so a
     // coarse audio index cannot shift video later than the start of the clip.
     if (copiesOriginalStreams()) arguments += QStringList{"-c", "copy", "-copypriorss:v", "1", "-copypriorss:a", "0", "-avoid_negative_ts", "make_zero", "-f", "matroska"};
-    else arguments += QStringList{"-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"};
+    else arguments += QStringList{"-c:v", "libx264", "-preset", "veryslow", "-crf", "32", "-pix_fmt", "yuv420p", "-profile:v", "main", "-level", "3.1", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"};
     arguments += QStringList{"-progress", "pipe:1", "-nostats", staging_};
-    process_.start(findTool("ffmpeg"), arguments);
+    startProcess(Operation::Export, findTool("ffmpeg"), arguments,
+        copiesOriginalStreams() ? "Copying original video and audio streams..." : "Fetching and encoding selection...", 0);
 }
 void MediaJobs::exportClip(const QString &source, qint64 start, qint64 end, const QString &destination, ExportMode mode) {
     if (busy()) return;
-    if (start < 0 || end <= start || !QFileInfo(source).isFile()) { emit failed("Choose a valid source and an end time after the start time."); return; }
+    if (!QFileInfo(source).isFile()) { emit failed("Choose a valid source video."); return; }
     const QString sourcePath = QFileInfo(source).canonicalFilePath();
     const QString destinationPath = QFileInfo(destination).canonicalFilePath();
 #ifdef Q_OS_WIN
@@ -153,7 +162,6 @@ void MediaJobs::exportClip(const QString &source, qint64 start, qint64 end, cons
 #endif
     if (sameFile) { emit failed("Choose a different file; the source video cannot be overwritten."); return; }
     if (!prepareExport(start, end, destination, mode)) return;
-    canceled_ = false;
     encode({"-ss", QString::number(start / 1000.0, 'f', 3), "-i", source}, "0:a:0?");
 }
 void MediaJobs::cancel() {
@@ -162,7 +170,7 @@ void MediaJobs::cancel() {
     ++resolveGeneration_;
     if (process_.state() == QProcess::NotRunning) {
         if (probe_) { auto *reply = probe_.data(); probe_.clear(); disconnect(reply, nullptr, this, nullptr); reply->abort(); reply->deleteLater(); }
-        if (!staging_.isEmpty()) { QFile::remove(staging_); staging_.clear(); }
+        discardOutput();
         active_ = false; emit canceled(); return;
     }
 #ifdef Q_OS_WIN
@@ -174,7 +182,7 @@ void MediaJobs::cancel() {
     process_.kill();
 }
 void MediaJobs::readOutput() {
-    if (mode_.startsWith("resolve") || mode_ == "keyframe") { metadata_ += process_.readAllStandardOutput(); return; }
+    if (process_.processChannelMode() == QProcess::SeparateChannels) { metadata_ += process_.readAllStandardOutput(); return; }
     const auto chunk = QString::fromUtf8(process_.readAllStandardOutput());
     log_ = (log_ + chunk).right(12000); lines_ += chunk;
     int index;
@@ -193,13 +201,13 @@ void MediaJobs::readOutput() {
 void MediaJobs::finish(int code, QProcess::ExitStatus status) {
     readOutput(); active_ = false;
     if (canceled_) {
-        if (!staging_.isEmpty()) { QFile::remove(staging_); staging_.clear(); }
-        pendingCache_.reset(); emit canceled(); return;
+        discardOutput(); emit canceled(); return;
     }
+    const bool resolving = operation_ == Operation::ResolvePreview || operation_ == Operation::ResolveExport;
     if (code || status != QProcess::NormalExit) {
-        fail((mode_ == "download" || mode_.startsWith("resolve") ? "YouTube operation failed. Update yt-dlp if YouTube has changed. Try Download first if a streaming preview is unavailable.\n\n" : "Export failed.\n\n") + log_.right(6000)); return;
+        fail((operation_ == Operation::Download || resolving ? "YouTube operation failed. Update yt-dlp if YouTube has changed. Try Download first if a streaming preview is unavailable.\n\n" : "Export failed.\n\n") + log_.right(6000)); return;
     }
-    if (mode_ == "keyframe") {
+    if (operation_ == Operation::FindKeyframe) {
         const auto report = QString::fromUtf8(metadata_); metadata_.clear();
         const auto timebase = QRegularExpression("#tb 0: (\\d+)/(\\d+)").match(report);
         bool ok = false; double pts = 0;
@@ -228,15 +236,15 @@ void MediaJobs::finish(int code, QProcess::ExitStatus status) {
         }
         writeOutput(adjusted, pendingAudioMap_); return;
     }
-    if (mode_.startsWith("resolve")) {
+    if (resolving) {
         QJsonParseError error;
         const auto info = QJsonDocument::fromJson(metadata_, &error).object(); metadata_.clear();
         if (error.error != QJsonParseError::NoError || info.isEmpty()) { fail("Could not read YouTube stream information."); return; }
         if (info.value("is_live").toBool() || info.value("duration").toDouble() <= 0) { fail("Streaming selection requires a finite video with a known duration."); return; }
-        prepareResolved(info, mode_ == "resolve-export");
+        prepareResolved(info, operation_ == Operation::ResolveExport);
         return;
     }
-    if (mode_ == "download") {
+    if (operation_ == Operation::Download) {
         QDir dir(pendingCache_->path()); QString source;
         for (const auto &info : dir.entryInfoList(QDir::Files)) {
             if (QStringList{"mp4", "mkv", "webm", "mov"}.contains(info.suffix()) && !info.completeBaseName().contains('.')) source = info.absoluteFilePath();
@@ -308,21 +316,20 @@ void MediaJobs::prepareResolved(QJsonObject info, bool forExport, int attempt, b
     active_ = false; useResolved(info, forExport);
 }
 void MediaJobs::useResolved(const QJsonObject &info, bool forExport) {
-        if (!forExport) {
-            const QUrl url = bridge_.add(info, {}, info.value("id").toString());
-            if (url.isEmpty()) { fail("No seekable HTTP preview is available. Choose Download first."); return; }
-            emit streamReady(url, info.value("title").toString("YouTube video"), qRound64(info.value("duration").toDouble() * 1000), info.value("height").toInt());
-        } else {
-            QJsonArray formats = info.value("requested_formats").toArray();
-            if (formats.isEmpty()) formats.append(info);
-            if (formats.size() > 2) { fail("Unexpected number of YouTube media streams."); return; }
-            QStringList inputs;
-            for (const auto &value : formats) {
-                const auto format = value.toObject(); const QUrl url = bridge_.add(format, info.value("http_headers").toObject(), info.value("id").toString());
-                if (url.isEmpty()) { fail("No seekable video/audio stream is available for this selection. Try Download first."); return; }
-                inputs += QStringList{"-ss", QString::number(exportStart_ / 1000.0, 'f', 3), "-rw_timeout", "20000000"};
-                inputs += QStringList{"-i", url.toString(QUrl::FullyEncoded)};
-            }
-            encode(inputs, formats.size() == 2 ? "1:a:0" : "0:a:0?");
-        }
+    if (!forExport) {
+        const QUrl url = bridge_.add(info, {}, info.value("id").toString());
+        if (url.isEmpty()) { fail("No seekable HTTP preview is available. Choose Download first."); return; }
+        emit streamReady(url, info.value("title").toString("YouTube video"), qRound64(info.value("duration").toDouble() * 1000), info.value("height").toInt());
+        return;
+    }
+    QJsonArray formats = info.value("requested_formats").toArray();
+    if (formats.isEmpty()) formats.append(info);
+    if (formats.size() > 2) { fail("Unexpected number of YouTube media streams."); return; }
+    QStringList inputs;
+    for (const auto &value : formats) {
+        const auto format = value.toObject(); const QUrl url = bridge_.add(format, info.value("http_headers").toObject(), info.value("id").toString());
+        if (url.isEmpty()) { fail("No seekable video/audio stream is available for this selection. Try Download first."); return; }
+        inputs += QStringList{"-ss", QString::number(exportStart_ / 1000.0, 'f', 3), "-rw_timeout", "20000000", "-i", url.toString(QUrl::FullyEncoded)};
+    }
+    encode(inputs, formats.size() == 2 ? "1:a:0" : "0:a:0?");
 }
