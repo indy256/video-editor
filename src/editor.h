@@ -19,6 +19,7 @@ public:
     void openYouTubeUrl(const QString &url);
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 private:
     void openYouTube();
     void openMedia(const QUrl &source, const QString &title, const QString &selectionKey, qint64 duration = 0);
@@ -30,6 +31,7 @@ private:
     void setBusy(bool busy);
     void togglePlayback();
     void seekAndPlay(qint64 position);
+    bool playbackReady() const;
     bool textFieldHasFocus() const;
     MediaJobs jobs_;
     QMediaPlayer *player_;

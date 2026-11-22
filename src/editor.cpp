@@ -14,6 +14,7 @@
 #include <QMediaMetaData>
 #include <QMediaPlayer>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
@@ -223,6 +224,7 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     const auto toggle = [this] { togglePlayback(); };
     const auto playFromIn = [this] { seekAndPlay(timeline_->start()); };
     connect(play_, &QPushButton::clicked, this, toggle);
+    video->installEventFilter(this);
     connect(playSelection_, &QPushButton::clicked, this, playFromIn);
     connect(save_, &QPushButton::clicked, this, &EditorWindow::saveSelection);
     connect(cancel_, &QPushButton::clicked, &jobs_, &MediaJobs::cancel);
@@ -297,7 +299,7 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     connect(&jobs_, &MediaJobs::canceled, this, [this] { setBusy(false); status_->setText("Canceled."); });
     auto addPlaybackShortcut = [this](Qt::Key key, auto action) {
         auto *shortcut = new QShortcut(QKeySequence(key), this, this, [this, key, action] {
-            if (!play_->isEnabled() || player_->source().isEmpty()) return;
+            if (!playbackReady()) return;
             if (key != Qt::Key_Pause && textFieldHasFocus()) return;
             action();
         });
@@ -315,12 +317,23 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     refreshSelection();
     restoreGeometry(settings.value("window/geometry").toByteArray());
 }
+bool EditorWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (event->type() == QEvent::MouseButtonPress && watched == player_->videoOutput() &&
+        static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton && playbackReady()) {
+        togglePlayback();
+        return true;
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
 void EditorWindow::togglePlayback() {
     if (player_->isPlaying()) player_->pause(); else player_->play();
 }
 void EditorWindow::seekAndPlay(qint64 position) {
     player_->setPosition(position);
     player_->play();
+}
+bool EditorWindow::playbackReady() const {
+    return play_->isEnabled() && !player_->source().isEmpty();
 }
 bool EditorWindow::textFieldHasFocus() const {
     return url_->hasFocus() || in_->hasFocus() || out_->hasFocus();

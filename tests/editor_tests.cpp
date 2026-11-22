@@ -346,6 +346,13 @@ private slots:
         auto screenshot = qEnvironmentVariable("VIDEO_EDITOR_SCREENSHOT");
         if (!screenshot.isEmpty()) { QTest::qWait(500); QVERIFY(window.grab().save(screenshot)); }
         player->audioOutput()->setMuted(true);
+        const QPoint videoPoint = video->mapTo(&window, video->rect().center());
+        const auto clickVideo = [&](Qt::MouseButton button) {
+            QTest::mouseClick(window.windowHandle(), button, Qt::NoModifier, videoPoint);
+        };
+        clickVideo(Qt::RightButton);
+        QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+
         const QPoint seekPoint(timeline->width() * 3 / 5, 40);
         QSignalSpy positions(player, &QMediaPlayer::positionChanged);
         QTest::mouseClick(timeline, Qt::LeftButton, Qt::ShiftModifier, seekPoint);
@@ -355,17 +362,21 @@ private slots:
         QTRY_VERIFY(positions.contains(QVariantList{timeline->start()}));
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
 
-        for (auto key : {Qt::Key_Space, Qt::Key_Pause}) {
+        const auto checkPauseAndResume = [&](auto toggle) {
             QTest::mouseClick(timeline, Qt::LeftButton, Qt::ShiftModifier, seekPoint);
             QTRY_VERIFY(player->position() > timeline->start() + 1000);
-            QTest::keyClick(timeline, key);
+            toggle();
             QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
             const qint64 pausedAt = player->position();
             QVERIFY(pausedAt > timeline->start() + 1000);
-            QTest::keyClick(timeline, key);
+            QVERIFY(pausedAt < timeline->end());
+            toggle();
             QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
             QVERIFY(player->position() >= pausedAt);
-        }
+        };
+        for (auto key : {Qt::Key_Space, Qt::Key_Pause})
+            checkPauseAndResume([&] { QTest::keyClick(timeline, key); });
+        checkPauseAndResume([&] { clickVideo(Qt::LeftButton); });
         const QPair<qint64, qint64> outSeeks[] = {{3500, 2500}, {750, 0}};
         for (const auto &[out, expected] : outSeeks) {
             timeline->setSelection(500, out);
