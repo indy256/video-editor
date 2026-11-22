@@ -347,6 +347,23 @@ private slots:
         if (!screenshot.isEmpty()) { QTest::qWait(500); QVERIFY(window.grab().save(screenshot)); }
         player->audioOutput()->setMuted(true);
         const QPoint videoPoint = video->mapTo(&window, video->rect().center());
+        const QPoint dragDistance(60, 40);
+        const auto dragWindow = [&](const QPoint &from) {
+            const QPoint destination = window.mapToGlobal(from + dragDistance);
+            QTest::mousePress(window.windowHandle(), Qt::LeftButton, Qt::NoModifier, from);
+            QTest::mouseMove(window.windowHandle(), from + dragDistance);
+            QTest::mouseRelease(window.windowHandle(), Qt::LeftButton, Qt::NoModifier, window.mapFromGlobal(destination));
+        };
+        const QPoint originalPosition = window.pos();
+        dragWindow(window.centralWidget()->mapTo(&window, QPoint(4, 4)));
+        QCOMPARE(window.pos(), originalPosition + dragDistance);
+        dragWindow(videoPoint);
+        QCOMPARE(window.pos(), originalPosition + 2 * dragDistance);
+        QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+        dragWindow(play->mapTo(&window, play->rect().center()));
+        QCOMPARE(window.pos(), originalPosition + 2 * dragDistance);
+        window.move(originalPosition);
+
         const auto clickVideo = [&](Qt::MouseButton button) {
             QTest::mouseClick(window.windowHandle(), button, Qt::NoModifier, videoPoint);
         };

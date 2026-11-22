@@ -1,5 +1,6 @@
 #include "editor.h"
 #include "timeline.h"
+#include <QApplication>
 #include <QAudioOutput>
 #include <QCloseEvent>
 #include <QCryptographicHash>
@@ -29,6 +30,7 @@
 #include <QVideoFrame>
 #include <QVideoSink>
 #include <QVideoWidget>
+#include <QWindow>
 #include <QStackedLayout>
 #include <algorithm>
 #include <cmath>
@@ -224,7 +226,8 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     const auto toggle = [this] { togglePlayback(); };
     const auto playFromIn = [this] { seekAndPlay(timeline_->start()); };
     connect(play_, &QPushButton::clicked, this, toggle);
-    video->installEventFilter(this);
+    QWidget *const dragSurfaces[] = {root, stage, empty, video};
+    for (auto *surface : dragSurfaces) surface->installEventFilter(this);
     connect(playSelection_, &QPushButton::clicked, this, playFromIn);
     connect(save_, &QPushButton::clicked, this, &EditorWindow::saveSelection);
     connect(cancel_, &QPushButton::clicked, &jobs_, &MediaJobs::cancel);
@@ -318,10 +321,47 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     restoreGeometry(settings.value("window/geometry").toByteArray());
 }
 bool EditorWindow::eventFilter(QObject *watched, QEvent *event) {
-    if (event->type() == QEvent::MouseButtonPress && watched == player_->videoOutput() &&
-        static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton && playbackReady()) {
-        togglePlayback();
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonDblClick: {
+        const auto *mouse = static_cast<QMouseEvent *>(event);
+        if (mouse->button() != Qt::LeftButton ||
+            (watched == centralWidget() && centralWidget()->childAt(mouse->position().toPoint()))) {
+            break;
+        }
+        windowDrag_ = {watched, mouse->globalPosition().toPoint(), pos()};
         return true;
+    }
+    case QEvent::MouseMove:
+    case QEvent::MouseButtonRelease: {
+        if (windowDrag_.surface != watched) break;
+        const auto *mouse = static_cast<QMouseEvent *>(event);
+        const QPoint delta = mouse->globalPosition().toPoint() - windowDrag_.pressPosition;
+        const bool dragging = windowDrag_.moving || delta.manhattanLength() >= QApplication::startDragDistance();
+        if (event->type() == QEvent::MouseButtonRelease) {
+            if (mouse->button() != Qt::LeftButton) break;
+            windowDrag_ = {};
+            if (!dragging && watched == player_->videoOutput() && playbackReady()) togglePlayback();
+            return true;
+        }
+        if (!mouse->buttons().testFlag(Qt::LeftButton)) {
+            windowDrag_ = {};
+            break;
+        }
+        if (!dragging) return true;
+        if (!windowDrag_.moving) {
+            windowDrag_.moving = true;
+            if (auto *handle = windowHandle(); handle && handle->startSystemMove()) windowDrag_ = {};
+        }
+        if (windowDrag_.surface && !isMaximized() && !isFullScreen()) move(windowDrag_.windowPosition + delta);
+        return true;
+    }
+    case QEvent::Hide:
+    case QEvent::UngrabMouse:
+        if (windowDrag_.surface == watched) windowDrag_ = {};
+        break;
+    default:
+        break;
     }
     return QMainWindow::eventFilter(watched, event);
 }

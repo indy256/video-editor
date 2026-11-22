@@ -44,5 +44,12 @@ private:
     QSlider *seek_;
     QTimeEdit *in_, *out_;
     QString youtubePage_, selectionKey_;
+    struct WindowDrag {
+        QObject *surface = nullptr;
+        QPoint pressPosition;
+        QPoint windowPosition;
+        bool moving = false;
+    };
+    WindowDrag windowDrag_;
     bool busy_ = false;
 };
