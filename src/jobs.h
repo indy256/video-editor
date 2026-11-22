@@ -12,7 +12,7 @@
 
 QString findTool(const QString &name);
 bool isYouTubeUrl(const QString &text);
-enum class ExportMode { PreciseMp4, OriginalStreams };
+enum class ExportMode { H264Mp4 = 0, H265Mp4 = 1, OriginalStreams = 2 };
 
 class MediaJobs : public QObject {
     Q_OBJECT
@@ -24,15 +24,15 @@ public:
     qint64 cachedBytesServed() const { return bridge_.cachedBytesServed(); }
     void download(const QString &url);
     void resolveStream(const QString &url);
-    void exportYouTube(const QString &url, qint64 start, qint64 end, const QString &destination, ExportMode mode = ExportMode::PreciseMp4);
-    void exportClip(const QString &source, qint64 start, qint64 end, const QString &destination, ExportMode mode = ExportMode::PreciseMp4);
+    void exportYouTube(const QString &url, qint64 start, qint64 end, const QString &destination, ExportMode mode = ExportMode::H264Mp4);
+    void exportClip(const QString &source, qint64 start, qint64 end, const QString &destination, ExportMode mode = ExportMode::H264Mp4);
     bool copiesOriginalStreams() const { return exportMode_ == ExportMode::OriginalStreams; }
     qint64 actualExportStart() const { return actualStartUs_ / 1000; }
     void cancel();
 signals:
     void progress(int percent, const QString &message);
-    void downloaded(const QString &path, const QString &title);
-    void streamReady(const QUrl &url, const QString &title, qint64 duration, int height);
+    void downloaded(const QString &path, const QString &title, const QString &videoId);
+    void streamReady(const QUrl &url, const QString &title, qint64 duration, int height, const QString &videoId);
     void exported(const QString &path);
     void failed(const QString &message);
     void canceled();
@@ -62,7 +62,7 @@ private:
     qint64 exportStart_ = 0;
     qint64 exportDuration_ = 0;
     qint64 actualStartUs_ = 0;
-    ExportMode exportMode_ = ExportMode::PreciseMp4;
+    ExportMode exportMode_ = ExportMode::H264Mp4;
     QStringList pendingInputs_;
     QString pendingAudioMap_;
     bool active_ = false, canceled_ = false;

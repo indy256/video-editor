@@ -8,6 +8,7 @@ class Timeline : public QWidget {
 public:
     explicit Timeline(QWidget *parent = nullptr);
     qint64 duration() const { return duration_; }
+    qint64 position() const { return position_; }
     qint64 start() const { return start_; }
     qint64 end() const { return end_; }
     void setDuration(qint64 value);
@@ -22,8 +23,13 @@ protected:
     void mouseMoveEvent(QMouseEvent *) override;
     void mouseReleaseEvent(QMouseEvent *) override;
 private:
-    qint64 at(double x) const;
-    int xAt(qint64 value) const;
-    void select(QMouseEvent *event);
+    enum class DragTarget { None, In, Out, Seek };
+    qint64 at(qreal x) const;
+    qreal xAt(qint64 value) const;
+    QRect handleRect(DragTarget marker) const;
+    DragTarget markerAt(const QPoint &point) const;
+    void updateDrag(qreal x);
+    DragTarget dragTarget_ = DragTarget::None;
+    qreal dragOffset_ = 0;
     qint64 duration_ = 0, position_ = 0, start_ = 0, end_ = 0;
 };

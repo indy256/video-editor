@@ -149,13 +149,21 @@ void MediaJobs::writeOutput(const QStringList &inputs, const QString &audioMap) 
     arguments += inputs;
     const double duration = (exportStart_ + exportDuration_) / 1000.0 - actualStartUs_ / 1000000.0;
     arguments += QStringList{"-t", QString::number(duration, 'f', 6), "-map", "0:v:0", "-map", audioMap};
-    // Retain the preceding video keyframe, but discard audio seek preroll so a
-    // coarse audio index cannot shift video later than the start of the clip.
-    if (copiesOriginalStreams()) arguments += QStringList{"-c", "copy", "-copypriorss:v", "1", "-copypriorss:a", "0", "-avoid_negative_ts", "make_zero", "-f", "matroska"};
-    else arguments += QStringList{"-c:v", "libx264", "-preset", "slow", "-crf", "32", "-pix_fmt", "yuv420p", "-profile:v", "main", "-tag:v", "avc1", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"};
+    const bool copy = copiesOriginalStreams();
+    if (copy) {
+        // Discard audio seek preroll and retain the preceding video keyframe.
+        arguments += QStringList{"-c", "copy", "-copypriorss:v", "1", "-copypriorss:a", "0", "-avoid_negative_ts", "make_zero", "-f", "matroska"};
+    } else {
+        if (exportMode_ == ExportMode::H264Mp4) {
+            arguments += QStringList{"-c:v", "libx264", "-preset", "veryslow", "-tag:v", "avc1"};
+        } else {
+            arguments += QStringList{"-c:v", "libx265", "-preset", "slow", "-tag:v", "hvc1"};
+        }
+        arguments += QStringList{"-crf", "32", "-pix_fmt", "yuv420p", "-profile:v", "main", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"};
+    }
     arguments += QStringList{"-progress", "pipe:1", "-nostats", staging_};
     startProcess(Operation::Export, findTool("ffmpeg"), arguments,
-        copiesOriginalStreams() ? "Copying original video and audio streams..." : "Fetching and encoding selection...", 0);
+        copy ? "Copying original video and audio streams..." : "Fetching and encoding selection...", 0);
 }
 void MediaJobs::exportClip(const QString &source, qint64 start, qint64 end, const QString &destination, ExportMode mode) {
     if (busy()) return;
@@ -225,7 +233,7 @@ void MediaJobs::finish(int code, QProcess::ExitStatus status) {
         const double denominator = timebase.captured(2).toDouble();
         pts = denominator > 0 ? pts * timebase.captured(1).toDouble() / denominator : -1;
         if (!ok || !timebase.hasMatch() || !std::isfinite(pts) || pts < 0 || pts > qMax(0.1, exportStart_ / 1000.0) + 0.001) {
-            fail("Could not locate a keyframe at or before IN. Choose Precise MP4 for this video."); return;
+            fail("Could not locate a keyframe at or before IN. Choose H.264 or H.265 for this video."); return;
         }
         actualStartUs_ = qMin(exportStart_ * 1000, qMax(qint64(0), qRound64(pts * 1000000)));
         QStringList adjusted;
@@ -262,7 +270,7 @@ void MediaJobs::finish(int code, QProcess::ExitStatus status) {
         auto metadata = QJsonDocument::fromJson(json.readAll()).object();
         if (cache_) retiredCaches_.push_back(std::move(cache_));
         cache_ = std::move(pendingCache_);
-        emit downloaded(source, metadata.value("title").toString("YouTube video"));
+        emit downloaded(source, metadata.value("title").toString("YouTube video"), metadata.value("id").toString());
     } else {
         if (QFileInfo(staging_).size() == 0) { fail("FFmpeg produced an empty file."); return; }
 #ifdef Q_OS_WIN
@@ -324,9 +332,10 @@ void MediaJobs::prepareResolved(QJsonObject info, bool forExport, int attempt, b
 }
 void MediaJobs::useResolved(const QJsonObject &info, bool forExport) {
     if (!forExport) {
-        const QUrl url = bridge_.add(info, {}, info.value("id").toString());
+        const QString videoId = info.value("id").toString();
+        const QUrl url = bridge_.add(info, {}, videoId);
         if (url.isEmpty()) { fail("No seekable HTTP preview is available. Choose Download first."); return; }
-        emit streamReady(url, info.value("title").toString("YouTube video"), qRound64(info.value("duration").toDouble() * 1000), info.value("height").toInt());
+        emit streamReady(url, info.value("title").toString("YouTube video"), qRound64(info.value("duration").toDouble() * 1000), info.value("height").toInt(), videoId);
         return;
     }
     QJsonArray formats = info.value("requested_formats").toArray();

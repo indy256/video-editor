@@ -15,18 +15,22 @@ class EditorWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit EditorWindow(QWidget *parent = nullptr);
-    void openFile(const QString &path, const QString &title = {});
+    void openFile(const QString &path);
     void openYouTubeUrl(const QString &url);
 protected:
     void closeEvent(QCloseEvent *event) override;
 private:
     void openYouTube();
-    void openMedia(const QUrl &source, const QString &title, qint64 duration = 0);
+    void openMedia(const QUrl &source, const QString &title, const QString &selectionKey, qint64 duration = 0);
+    void updateMediaDuration(qint64 duration);
     void chooseFile();
     void saveSelection();
     void refreshSelection();
+    void updateSelectionActions();
     void setBusy(bool busy);
     void togglePlayback();
+    void seekAndPlay(qint64 position);
+    bool textFieldHasFocus() const;
     MediaJobs jobs_;
     QMediaPlayer *player_;
     Timeline *timeline_;
@@ -37,6 +41,6 @@ private:
     QProgressBar *progress_;
     QSlider *seek_;
     QTimeEdit *in_, *out_;
-    QString youtubePage_;
-    bool busy_ = false, previewing_ = false;
+    QString youtubePage_, selectionKey_;
+    bool busy_ = false;
 };
