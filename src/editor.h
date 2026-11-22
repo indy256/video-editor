@@ -38,13 +38,14 @@ private:
     bool textFieldHasFocus() const;
     MediaJobs jobs_;
     QMediaPlayer *player_;
+    QWidget *previewArea_;
     Timeline *timeline_;
     QLineEdit *url_;
     QComboBox *loadMode_, *exportMode_;
     QLabel *title_, *clock_, *selection_, *status_;
     QPushButton *open_, *local_, *save_, *play_, *cancel_, *playSelection_;
     QProgressBar *progress_;
-    QSlider *seek_;
+    QSlider *seek_, *volume_;
     QTimeEdit *in_, *out_;
     QString youtubePage_, selectionKey_;
     struct WindowDrag {

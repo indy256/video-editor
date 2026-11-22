@@ -32,6 +32,7 @@
 #include <QVideoFrame>
 #include <QVideoSink>
 #include <QVideoWidget>
+#include <QWheelEvent>
 #include <QWindow>
 #include <QStackedLayout>
 #include <algorithm>
@@ -173,10 +174,12 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     loadMode_->setToolTip("Streaming starts without a full download. Preview resolution depends on combined streams; saved clips use up to 1080p. Download first caches the full video for offline seeking.");
     sourceRow->addWidget(url_, 1); sourceRow->addWidget(loadMode_); sourceRow->addWidget(open_); sourceRow->addWidget(local_); layout->addLayout(sourceRow);
     title_ = new QLabel("Your next clip starts here"); title_->setObjectName("title"); title_->setTextFormat(Qt::PlainText); layout->addWidget(title_);
-    auto *stage = new QWidget; stage->setObjectName("stage"); stage->setMinimumHeight(220);
-    auto *stack = new QStackedLayout(stage);
+    previewArea_ = new QWidget;
+    previewArea_->setObjectName("stage");
+    previewArea_->setMinimumHeight(220);
+    auto *stack = new QStackedLayout(previewArea_);
     auto *empty = new QLabel("Open a video to begin\n\nYouTube links and local video files"); empty->setAlignment(Qt::AlignCenter); empty->setObjectName("empty");
-    auto *video = new QVideoWidget; video->setAspectRatioMode(Qt::KeepAspectRatio); stack->addWidget(empty); stack->addWidget(video); layout->addWidget(stage, 1);
+    auto *video = new QVideoWidget; video->setAspectRatioMode(Qt::KeepAspectRatio); stack->addWidget(empty); stack->addWidget(video); layout->addWidget(previewArea_, 1);
     player_ = new QMediaPlayer(this);
     auto *audio = new QAudioOutput(this);
     player_->setAudioOutput(audio); player_->setVideoOutput(video);
@@ -185,17 +188,24 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     play_->setEnabled(false);
     playSelection_ = new QPushButton("Play selection");
     clock_ = new QLabel("00:00:00.000 / 00:00:00.000"); clock_->setMinimumWidth(245);
-    auto *volume = new QSlider(Qt::Horizontal); volume->setRange(0, 100); volume->setMaximumWidth(100); volume->setAccessibleName("Volume");
+    volume_ = new QSlider(Qt::Horizontal);
+    volume_->setRange(0, 100);
+    volume_->setMaximumWidth(100);
+    volume_->setAccessibleName("Volume");
     bool volumeValid = false;
     const int savedVolume = settings.value("playback/volume").toInt(&volumeValid);
-    volume->setValue(volumeValid ? savedVolume : 70);
-    audio->setVolume(volume->value() / 100.f);
+    volume_->setValue(volumeValid ? savedVolume : 70);
+    audio->setVolume(volume_->value() / 100.f);
+    connect(volume_, &QSlider::valueChanged, audio, [audio](int value) {
+        audio->setVolume(value / 100.f);
+        QSettings().setValue("playback/volume", value);
+    });
     transport->addWidget(play_);
     transport->addWidget(playSelection_);
     transport->addWidget(clock_);
     transport->addStretch();
     transport->addWidget(new QLabel("Volume"));
-    transport->addWidget(volume);
+    transport->addWidget(volume_);
     layout->addLayout(transport);
     seek_ = new PlaybackSlider; seek_->setRange(0, 0); seek_->setAccessibleName("Playback position"); layout->addWidget(seek_);
     auto *selectionHeader = new QHBoxLayout;
@@ -268,15 +278,11 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     const auto toggle = [this] { togglePlayback(); };
     const auto playFromIn = [this] { seekAndPlay(timeline_->start()); };
     connect(play_, &QPushButton::clicked, this, toggle);
-    QWidget *const dragSurfaces[] = {root, stage, empty, video};
-    for (auto *surface : dragSurfaces) surface->installEventFilter(this);
+    QWidget *const surfaces[] = {root, previewArea_, empty, video};
+    for (auto *surface : surfaces) surface->installEventFilter(this);
     connect(playSelection_, &QPushButton::clicked, this, playFromIn);
     connect(save_, &QPushButton::clicked, this, &EditorWindow::saveSelection);
     connect(cancel_, &QPushButton::clicked, &jobs_, &MediaJobs::cancel);
-    connect(volume, &QSlider::valueChanged, audio, [audio](int value) {
-        audio->setVolume(value / 100.f);
-        QSettings().setValue("playback/volume", value);
-    });
     connect(seek_, &QSlider::actionTriggered, this, [this] {
         seekTo(qRound64(double(seek_->sliderPosition()) / seekSliderMaximum * timeline_->duration()));
     });
@@ -371,6 +377,10 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
 }
 bool EditorWindow::eventFilter(QObject *watched, QEvent *event) {
     switch (event->type()) {
+    case QEvent::Wheel:
+        if (watched == previewArea_ && static_cast<QWheelEvent *>(event)->angleDelta().y())
+            return QApplication::sendEvent(volume_, event);
+        break;
     case QEvent::MouseButtonPress:
     case QEvent::MouseButtonDblClick: {
         const auto *mouse = static_cast<QMouseEvent *>(event);

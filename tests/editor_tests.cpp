@@ -470,6 +470,36 @@ private slots:
         QTest::keyClick(&window, Qt::Key_Escape);
         QTRY_VERIFY(!window.isVisible());
     }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0) // QTest::wheelEvent
+    void previewWheelVolume() {
+        EditorWindow window; window.show();
+        auto *volume = findControl<QSlider>(window, "Volume");
+        auto *video = window.findChild<QVideoWidget *>();
+        auto *player = window.findChild<QMediaPlayer *>();
+        auto *in = findControl<QTimeEdit>(window, "Selection start");
+        QVERIFY(volume); QVERIFY(video); QVERIFY(player); QVERIFY(in);
+        window.openFile(source);
+        QTRY_VERIFY(video->videoSink()->videoFrame().isValid());
+        const auto scroll = [&](QWidget *target, QPoint delta) {
+            QTest::wheelEvent(window.windowHandle(), target->mapTo(&window, target->rect().center()), delta);
+        };
+        volume->setValue(50);
+        scroll(video, QPoint(0, 120));
+        const int raisedVolume = volume->value();
+        QVERIFY(raisedVolume > 50);
+        QCOMPARE(player->audioOutput()->volume(), raisedVolume / 100.f);
+        scroll(video, QPoint(0, -120));
+        QCOMPARE(volume->value(), 50);
+        scroll(video, QPoint(120, 0));
+        QCOMPARE(volume->value(), 50);
+        const QTime start = in->time();
+        scroll(in, QPoint(0, 120));
+        QVERIFY(in->time() > start);
+        QCOMPARE(volume->value(), 50);
+        scroll(volume, QPoint(0, 120));
+        QCOMPARE(volume->value(), raisedVolume);
+    }
+#endif
     void openFileShortcut() {
         EditorWindow window; window.show(); window.activateWindow();
         QTRY_VERIFY(window.isActiveWindow());
