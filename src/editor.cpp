@@ -139,14 +139,22 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     auto *audio = new QAudioOutput(this);
     player_->setAudioOutput(audio); player_->setVideoOutput(video);
     auto *transport = new QHBoxLayout;
-    play_ = new QPushButton("Play"); play_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay)); play_->setEnabled(false);
+    play_ = new QPushButton;
+    play_->setEnabled(false);
+    playSelection_ = new QPushButton("Play selection");
     clock_ = new QLabel("00:00:00.000 / 00:00:00.000"); clock_->setMinimumWidth(245);
     auto *volume = new QSlider(Qt::Horizontal); volume->setRange(0, 100); volume->setMaximumWidth(100); volume->setAccessibleName("Volume");
     bool volumeValid = false;
     const int savedVolume = settings.value("playback/volume").toInt(&volumeValid);
     volume->setValue(volumeValid ? savedVolume : 70);
     audio->setVolume(volume->value() / 100.f);
-    transport->addWidget(play_); transport->addWidget(clock_); transport->addStretch(); transport->addWidget(new QLabel("Volume")); transport->addWidget(volume); layout->addLayout(transport);
+    transport->addWidget(play_);
+    transport->addWidget(playSelection_);
+    transport->addWidget(clock_);
+    transport->addStretch();
+    transport->addWidget(new QLabel("Volume"));
+    transport->addWidget(volume);
+    layout->addLayout(transport);
     seek_ = new QSlider(Qt::Horizontal); seek_->setRange(0, 0); seek_->setAccessibleName("Playback position"); layout->addWidget(seek_);
     auto *selectionHeader = new QHBoxLayout;
     auto *label = new QLabel("SELECT YOUR CLIP"); label->setObjectName("brand"); selectionHeader->addWidget(label); selectionHeader->addStretch();
@@ -158,8 +166,8 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     in_->setAccessibleName("Selection start"); out_->setAccessibleName("Selection end");
     clipRow->addWidget(new QLabel("IN")); clipRow->addWidget(in_); clipRow->addSpacing(12); clipRow->addWidget(new QLabel("OUT")); clipRow->addWidget(out_);
     selection_ = new QLabel; clipRow->addWidget(selection_); clipRow->addStretch();
-    preview_ = new QPushButton("Preview selection"); save_ = new QPushButton("Save selection"); save_->setObjectName("primary"); save_->setEnabled(false); preview_->setEnabled(false);
-    clipRow->addWidget(preview_); clipRow->addWidget(save_); layout->addLayout(clipRow);
+    save_ = new QPushButton("Save selection"); save_->setObjectName("primary");
+    clipRow->addWidget(save_); layout->addLayout(clipRow);
     auto *exportRow = new QHBoxLayout;
     exportMode_ = new QComboBox; exportMode_->setAccessibleName("Export mode");
     exportMode_->addItem("H.264 (MP4)", int(ExportMode::H264Mp4));
@@ -212,7 +220,10 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
         QSettings().setValue("youtube/downloadFirst", index == 1);
     });
     connect(local_, &QPushButton::clicked, this, &EditorWindow::chooseFile);
-    connect(play_, &QPushButton::clicked, this, &EditorWindow::togglePlayback);
+    const auto toggle = [this] { togglePlayback(); };
+    const auto playFromIn = [this] { seekAndPlay(timeline_->start()); };
+    connect(play_, &QPushButton::clicked, this, toggle);
+    connect(playSelection_, &QPushButton::clicked, this, playFromIn);
     connect(save_, &QPushButton::clicked, this, &EditorWindow::saveSelection);
     connect(cancel_, &QPushButton::clicked, &jobs_, &MediaJobs::cancel);
     connect(volume, &QSlider::valueChanged, audio, [audio](int value) {
@@ -236,7 +247,6 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
         timeline_->setSelection(timeline_->start(), time.msecsSinceStartOfDay());
         player_->setPosition(timeline_->end());
     });
-    connect(preview_, &QPushButton::clicked, this, [this] { player_->setPosition(timeline_->start()); player_->play(); });
     connect(player_, &QMediaPlayer::durationChanged, this, &EditorWindow::updateMediaDuration);
     connect(player_, &QMediaPlayer::positionChanged, this, [this](qint64 pos) {
         const qint64 out = timeline_->end();
@@ -250,10 +260,12 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
             if (player_->position() != out) player_->setPosition(out);
         }
     });
-    connect(player_, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
-        bool playing = state == QMediaPlayer::PlayingState; play_->setText(playing ? "Pause" : "Play");
+    const auto updatePlayButton = [this](bool playing) {
+        play_->setText(playing ? "Pause" : "Play");
         play_->setIcon(style()->standardIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
-    });
+    };
+    updatePlayButton(player_->isPlaying());
+    connect(player_, &QMediaPlayer::playingChanged, this, updatePlayButton);
     connect(player_, &QMediaPlayer::mediaStatusChanged, this, [this, stack, video](QMediaPlayer::MediaStatus state) {
         if (state == QMediaPlayer::LoadedMedia || state == QMediaPlayer::BufferedMedia) {
             stack->setCurrentWidget(video);
@@ -284,17 +296,19 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     connect(&jobs_, &MediaJobs::failed, this, [this](const QString &message) { setBusy(false); status_->setText("Operation failed. See details."); QMessageBox::warning(this, "Video Editor", message); });
     connect(&jobs_, &MediaJobs::canceled, this, [this] { setBusy(false); status_->setText("Canceled."); });
     auto addPlaybackShortcut = [this](Qt::Key key, auto action) {
-        auto *shortcut = new QShortcut(QKeySequence(key), this, this, action);
+        auto *shortcut = new QShortcut(QKeySequence(key), this, this, [this, key, action] {
+            if (!play_->isEnabled() || player_->source().isEmpty()) return;
+            if (key != Qt::Key_Pause && textFieldHasFocus()) return;
+            action();
+        });
         shortcut->setAutoRepeat(false);
     };
-    addPlaybackShortcut(Qt::Key_Space, [this] {
-        if (!textFieldHasFocus()) togglePlayback();
-    });
-    addPlaybackShortcut(Qt::Key_Left, [this] { seekAndPlay(timeline_->start()); });
+    addPlaybackShortcut(Qt::Key_Space, toggle);
+    addPlaybackShortcut(Qt::Key_Left, playFromIn);
     addPlaybackShortcut(Qt::Key_Right, [this] {
         seekAndPlay(qMax(qint64(0), timeline_->end() - 1000));
     });
-    addPlaybackShortcut(Qt::Key_Pause, &EditorWindow::togglePlayback);
+    addPlaybackShortcut(Qt::Key_Pause, toggle);
     new QShortcut(QKeySequence::Open, this, this, &EditorWindow::chooseFile);
     new QShortcut(QKeySequence::Save, this, this, &EditorWindow::saveSelection);
     new QShortcut(QKeySequence(Qt::Key_Escape), this, this, &QWidget::close);
@@ -302,12 +316,9 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     restoreGeometry(settings.value("window/geometry").toByteArray());
 }
 void EditorWindow::togglePlayback() {
-    if (player_->source().isEmpty() || !play_->isEnabled()) return;
     if (player_->isPlaying()) player_->pause(); else player_->play();
 }
 void EditorWindow::seekAndPlay(qint64 position) {
-    if (textFieldHasFocus()) return;
-    if (player_->source().isEmpty() || !play_->isEnabled()) return;
     player_->setPosition(position);
     player_->play();
 }
@@ -373,9 +384,9 @@ void EditorWindow::refreshSelection() {
     updateSelectionActions();
 }
 void EditorWindow::updateSelectionActions() {
-    const bool canPreview = !busy_ && timeline_->end() > timeline_->start();
-    preview_->setEnabled(canPreview);
-    save_->setEnabled(canPreview && !player_->source().isEmpty());
+    const bool canPlaySelection = !busy_ && timeline_->end() > timeline_->start();
+    playSelection_->setEnabled(canPlaySelection);
+    save_->setEnabled(canPlaySelection && !player_->source().isEmpty());
 }
 void EditorWindow::setBusy(bool busy) {
     if (busy_ == busy) return;

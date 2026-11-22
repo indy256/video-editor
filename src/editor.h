@@ -37,7 +37,7 @@ private:
     QLineEdit *url_;
     QComboBox *loadMode_, *exportMode_;
     QLabel *title_, *clock_, *selection_, *status_;
-    QPushButton *open_, *local_, *save_, *play_, *cancel_, *preview_;
+    QPushButton *open_, *local_, *save_, *play_, *cancel_, *playSelection_;
     QProgressBar *progress_;
     QSlider *seek_;
     QTimeEdit *in_, *out_;

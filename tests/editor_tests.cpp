@@ -270,12 +270,17 @@ private slots:
         for (const auto &state : states) QVERIFY(state.first().value<QMediaPlayer::PlaybackState>() != QMediaPlayer::PlayingState);
         QPushButton *save = nullptr;
         QPushButton *play = nullptr;
+        QPushButton *playSelection = nullptr;
         for (auto *button : window.findChildren<QPushButton *>()) {
             if (button->text() == "Save selection") save = button;
             if (button->text() == "Play") play = button;
+            if (button->text() == "Play selection") playSelection = button;
         }
         QVERIFY(save); QVERIFY(save->isEnabled());
         QVERIFY(play);
+        QVERIFY(playSelection); QVERIFY(playSelection->isEnabled());
+        QVERIFY(qAbs(playSelection->geometry().center().y() - play->geometry().center().y()) <= 1);
+        QVERIFY(playSelection->x() > play->geometry().right());
         auto *in = findControl<QTimeEdit>(window, "Selection start");
         auto *outEdit = findControl<QTimeEdit>(window, "Selection end");
         QVERIFY(in); QVERIFY(outEdit);
@@ -373,6 +378,12 @@ private slots:
         }
         player->setPosition(500);
         QTest::mouseClick(play, Qt::LeftButton);
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+        QCOMPARE(player->position(), timeline->end());
+        positions.clear();
+        QTest::mouseClick(playSelection, Qt::LeftButton);
+        QTRY_VERIFY(positions.contains(QVariantList{timeline->start()}));
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
         QCOMPARE(player->position(), timeline->end());
