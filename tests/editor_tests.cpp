@@ -13,6 +13,7 @@
 #include <QJsonObject>
 #include <QPushButton>
 #include <QComboBox>
+#include <QLabel>
 #include <QLineEdit>
 #include <QSettings>
 #include <QSlider>
@@ -363,6 +364,8 @@ private slots:
         QTest::keyClick(outEdit, Qt::Key_Up);
         QCOMPARE(timeline->end(), timeline->duration());
 
+        const QSize normalSize = window.size();
+        window.resize(qMax(normalSize.width(), window.sizeHint().width()), normalSize.height());
         auto clickStepButton = [&](QTimeEdit *edit, QStyle::SubControl control) {
             QStyleOptionSpinBox option;
             option.initFrom(edit);
@@ -371,6 +374,10 @@ private slots:
             const auto rect = edit->style()->subControlRect(QStyle::CC_SpinBox, &option, control, edit);
             QVERIFY(rect.width() >= 24 && rect.height() >= 12);
             QVERIFY(edit->rect().contains(rect));
+            const auto field = edit->style()->subControlRect(QStyle::CC_SpinBox, &option, QStyle::SC_SpinBoxEditField, edit);
+            const int textWidth = edit->fontMetrics().horizontalAdvance(edit->text());
+            const int compactWidth = edit->width() - field.width() + textWidth + 6;
+            QVERIFY(qAbs(edit->width() - qRound(compactWidth * 1.10)) <= 2);
             QTest::mouseClick(window.windowHandle(), Qt::LeftButton, Qt::NoModifier, edit->mapTo(&window, rect.center()));
         };
         clickStepButton(in, QStyle::SC_SpinBoxUp);
@@ -382,12 +389,35 @@ private slots:
         clickStepButton(outEdit, QStyle::SC_SpinBoxUp);
         QCOMPARE(timeline->end(), timeline->duration());
         timeline->setSelection(4000, 1000); QVERIFY(!save->isEnabled());
+        QLabel *summary = nullptr;
+        QLabel *formatLabel = nullptr;
+        for (auto *label : window.findChildren<QLabel *>()) {
+            if (label->text() == "OUT must be after IN") summary = label;
+            if (label->text() == "Save as") formatLabel = label;
+        }
+        QVERIFY(summary); QVERIFY(formatLabel);
         timeline->setSelection(1250, 3500); QVERIFY(save->isEnabled());
+        QCOMPARE(summary->text(), QString("00:00:02.3 selected"));
         auto *exportMode = findControl<QComboBox>(window, "Export mode");
         QVERIFY(exportMode); QCOMPARE(exportMode->count(), 3);
         exportMode->setCurrentIndex(exportMode->findData(int(ExportMode::OriginalStreams)));
         QCOMPARE(exportMode->currentData().toInt(), int(ExportMode::OriginalStreams));
         QVERIFY(save->isEnabled());
+        for (int width : {normalSize.width(), window.minimumWidth()}) {
+            window.resize(width, normalSize.height());
+            const int rowY = exportMode->geometry().center().y();
+            QVERIFY(qAbs(formatLabel->geometry().center().y() - rowY) <= 1);
+            int previousRight = -1;
+            const QWidget *clipControls[] = {in, outEdit, summary, formatLabel, exportMode, save};
+            for (const auto *control : clipControls) {
+                const QRect bounds = control->geometry();
+                QVERIFY(bounds.left() > previousRight);
+                QVERIFY(bounds.contains(bounds.center().x(), rowY));
+                QVERIFY(window.centralWidget()->rect().contains(bounds));
+                previousRight = bounds.right();
+            }
+        }
+        window.resize(normalSize);
         auto screenshot = qEnvironmentVariable("VIDEO_EDITOR_SCREENSHOT");
         if (!screenshot.isEmpty()) { QTest::qWait(500); QVERIFY(window.grab().save(screenshot)); }
         player->audioOutput()->setMuted(true);

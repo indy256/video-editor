@@ -12,11 +12,17 @@ constexpr int handleWidth = 38;
 constexpr int handleHeight = 20;
 }
 
-QString timeText(qint64 ms) {
+QString timeText(qint64 ms, TimePrecision precision) {
     ms = std::max(qint64(0), ms);
-    return QStringLiteral("%1:%2:%3.%4").arg(ms / 3600000, 2, 10, QChar('0'))
-        .arg(ms / 60000 % 60, 2, 10, QChar('0')).arg(ms / 1000 % 60, 2, 10, QChar('0'))
-        .arg(ms % 1000, 3, 10, QChar('0'));
+    const bool tenths = precision == TimePrecision::Tenths;
+    const int millisecondsPerUnit = tenths ? 100 : 1;
+    const int unitsPerSecond = 1000 / millisecondsPerUnit;
+    const qint64 roundedUnits = ms / millisecondsPerUnit
+        + (ms % millisecondsPerUnit + millisecondsPerUnit / 2) / millisecondsPerUnit;
+    const qint64 seconds = roundedUnits / unitsPerSecond;
+    return QStringLiteral("%1:%2:%3.%4").arg(seconds / 3600, 2, 10, QChar('0'))
+        .arg(seconds / 60 % 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0'))
+        .arg(roundedUnits % unitsPerSecond, tenths ? 1 : 3, 10, QChar('0'));
 }
 Timeline::Timeline(QWidget *parent) : QWidget(parent) {
     setMinimumHeight(108);

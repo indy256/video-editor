@@ -1,7 +1,8 @@
 #pragma once
 #include <QWidget>
 
-QString timeText(qint64 ms);
+enum class TimePrecision { Milliseconds, Tenths };
+QString timeText(qint64 ms, TimePrecision precision = TimePrecision::Milliseconds);
 
 class Timeline : public QWidget {
     Q_OBJECT

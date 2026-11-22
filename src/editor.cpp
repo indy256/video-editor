@@ -91,9 +91,28 @@ private:
 class FrameTimeEdit final : public QTimeEdit {
 public:
     explicit FrameTimeEdit(QMediaPlayer &player) : QTimeEdit(QTime(0, 0)), player_(player) {
+        setDisplayFormat("HH:mm:ss.zzz");
+        setEnabled(false);
         setToolTip("Up and Down move the marker by one frame");
         connect(&player_, &QMediaPlayer::sourceChanged, this, [this] { preciseTime_ = -1; });
     }
+
+    QSize sizeHint() const override {
+        QSize hint = QTimeEdit::sizeHint();
+        QStyleOptionSpinBox option;
+        initStyleOption(&option);
+        option.rect.setSize(hint);
+        const QRect field = style()->subControlRect(QStyle::CC_SpinBox, &option, QStyle::SC_SpinBoxEditField, this);
+        const auto metrics = fontMetrics();
+        const int timeWidth = qMax(metrics.horizontalAdvance(textFromDateTime(minimumDateTime())),
+                                   metrics.horizontalAdvance(textFromDateTime(maximumDateTime())));
+        constexpr int textMarginsAndCaret = 6;
+        const int compactWidth = hint.width() - field.width() + timeWidth + textMarginsAndCaret;
+        hint.setWidth(qRound(compactWidth * 1.10));
+        return hint;
+    }
+
+    QSize minimumSizeHint() const override { return sizeHint(); }
 
     void stepBy(int steps) override {
         const qreal interval = frameInterval();
@@ -212,36 +231,37 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     auto *label = new QLabel("SELECT YOUR CLIP"); label->setObjectName("brand"); selectionHeader->addWidget(label); selectionHeader->addStretch();
     auto *hint = new QLabel("Click: move closest marker    /    Drag handles    /    Shift-click: seek"); hint->setObjectName("muted"); selectionHeader->addWidget(hint); layout->addLayout(selectionHeader);
     timeline_ = new Timeline; timeline_->setFocusPolicy(Qt::ClickFocus); layout->addWidget(timeline_);
-    auto *clipRow = new QHBoxLayout;
-    in_ = new FrameTimeEdit(*player_); out_ = new FrameTimeEdit(*player_);
-    for (auto *edit : {in_, out_}) { edit->setDisplayFormat("HH:mm:ss.zzz"); edit->setEnabled(false); }
-    in_->setAccessibleName("Selection start"); out_->setAccessibleName("Selection end");
-    clipRow->addWidget(new QLabel("IN")); clipRow->addWidget(in_); clipRow->addSpacing(12); clipRow->addWidget(new QLabel("OUT")); clipRow->addWidget(out_);
-    selection_ = new QLabel; clipRow->addWidget(selection_); clipRow->addStretch();
-    save_ = new QPushButton("Save selection"); save_->setObjectName("primary");
-    clipRow->addWidget(save_); layout->addLayout(clipRow);
-    auto *exportRow = new QHBoxLayout;
+    auto *clipControls = new QHBoxLayout;
+    clipControls->setSpacing(4);
+    in_ = new FrameTimeEdit(*player_);
+    in_->setAccessibleName("Selection start");
+    out_ = new FrameTimeEdit(*player_);
+    out_->setAccessibleName("Selection end");
+    clipControls->addWidget(new QLabel("IN"));
+    clipControls->addWidget(in_);
+    clipControls->addWidget(new QLabel("OUT"));
+    clipControls->addWidget(out_);
+    selection_ = new QLabel;
+    selection_->setWordWrap(true);
+    clipControls->addWidget(selection_, 1);
     exportMode_ = new QComboBox; exportMode_->setAccessibleName("Export mode");
     exportMode_->addItem("H.264 (MP4)", int(ExportMode::H264Mp4));
     exportMode_->addItem("H.265 (MP4, slow)", int(ExportMode::H265Mp4));
-    exportMode_->addItem("Original streams (no re-encoding)", int(ExportMode::OriginalStreams));
-    exportRow->addWidget(new QLabel("Save as")); exportRow->addWidget(exportMode_);
-    auto *exportHint = new QLabel; exportHint->setObjectName("muted");
-    exportRow->addWidget(exportHint); exportRow->addStretch(); layout->addLayout(exportRow);
-    const auto updateExportHint = [exportHint](const QVariant &mode) {
-        const bool copy = mode.toInt() == int(ExportMode::OriginalStreams);
-        exportHint->setText(copy ? "MP4 stream copy from the preceding keyframe" : "MP4 with accurate selection boundaries");
-    };
+    exportMode_->addItem("Original streams", int(ExportMode::OriginalStreams));
+    auto *formatLabel = new QLabel("Save as");
+    formatLabel->setBuddy(exportMode_);
+    clipControls->addWidget(formatLabel, 0, Qt::AlignVCenter);
+    clipControls->addWidget(exportMode_);
+    save_ = new QPushButton("Save selection"); save_->setObjectName("primary");
+    clipControls->addWidget(save_);
+    layout->addLayout(clipControls);
     const auto previousMode = settings.value("export/originalStreams", false).toBool() ? ExportMode::OriginalStreams : ExportMode::H264Mp4;
     constexpr int retiredH265VerySlowMode = 3;
     const int savedMode = settings.value("export/mode", int(previousMode)).toInt();
     const int savedIndex = exportMode_->findData(savedMode == retiredH265VerySlowMode ? int(ExportMode::H265Mp4) : savedMode);
     exportMode_->setCurrentIndex(qMax(0, savedIndex));
-    updateExportHint(exportMode_->currentData());
-    connect(exportMode_, &QComboBox::currentIndexChanged, this, [this, updateExportHint] {
-        const auto mode = exportMode_->currentData();
-        updateExportHint(mode);
-        QSettings().setValue("export/mode", mode);
+    connect(exportMode_, &QComboBox::currentIndexChanged, this, [this] {
+        QSettings().setValue("export/mode", exportMode_->currentData());
     });
     auto *statusRow = new QHBoxLayout;
     status_ = new QLabel("Ready. Open a YouTube link or a local video."); status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true);
@@ -254,13 +274,14 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
         QLabel#muted { color: #929daf; font-size: 12px; }
         QWidget#stage, QLabel#empty { background: #090c11; border-radius: 8px; color: #8290a5; }
         QLineEdit, QTimeEdit, QComboBox { background: #1d2330; border: 1px solid #353e50; border-radius: 5px; padding: 9px; selection-background-color: #245b57; }
+        QTimeEdit { padding: 9px 4px; }
         QTimeEdit::up-button, QTimeEdit::down-button { subcontrol-origin: padding; width: 24px; background: #262e3e; border-left: 1px solid #3a455a; }
         QTimeEdit::up-button { subcontrol-position: top right; border-top-right-radius: 4px; }
         QTimeEdit::down-button { subcontrol-position: bottom right; border-top: 1px solid #3a455a; border-bottom-right-radius: 4px; }
         QTimeEdit::up-button:hover, QTimeEdit::down-button:hover { background: #354157; }
         QPushButton { background: #262e3e; border: 1px solid #3a455a; border-radius: 5px; padding: 9px 15px; font-weight: 600; }
         QPushButton:hover { background: #354157; } QPushButton:disabled { color: #697386; border-color: #2b3241; }
-        QPushButton#primary { background: #63e6c6; color: #102a26; border: 0; } QPushButton#primary:hover { background: #93f4dc; }
+        QPushButton#primary { background: #63e6c6; color: #102a26; border: 0; padding: 9px; } QPushButton#primary:hover { background: #93f4dc; }
         QPushButton#primary:disabled { background: #28463f; color: #81948e; }
         QSlider::groove:horizontal { background: #30394a; height: 5px; border-radius: 2px; }
         QSlider::handle:horizontal { background: #63e6c6; width: 12px; margin: -5px 0; border-radius: 6px; }
@@ -507,7 +528,7 @@ void EditorWindow::refreshSelection() {
     const QSignalBlocker blockIn(in_), blockOut(out_);
     in_->setTime(QTime::fromMSecsSinceStartOfDay(int(start % millisecondsPerDay)));
     out_->setTime(QTime::fromMSecsSinceStartOfDay(int(end % millisecondsPerDay)));
-    selection_->setText(end > start ? timeText(end - start) + " selected" : "OUT must be after IN");
+    selection_->setText(end > start ? timeText(end - start, TimePrecision::Tenths) + " selected" : "OUT must be after IN");
     updateSelectionActions();
 }
 void EditorWindow::updateSelectionActions() {
