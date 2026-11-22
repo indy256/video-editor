@@ -150,7 +150,7 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     seek_ = new QSlider(Qt::Horizontal); seek_->setRange(0, 0); seek_->setAccessibleName("Playback position"); layout->addWidget(seek_);
     auto *selectionHeader = new QHBoxLayout;
     auto *label = new QLabel("SELECT YOUR CLIP"); label->setObjectName("brand"); selectionHeader->addWidget(label); selectionHeader->addStretch();
-    auto *hint = new QLabel("Left-drag: IN or OUT    /    Shift-click: seek"); hint->setObjectName("muted"); selectionHeader->addWidget(hint); layout->addLayout(selectionHeader);
+    auto *hint = new QLabel("Click: move closest marker    /    Drag handles    /    Shift-click: seek"); hint->setObjectName("muted"); selectionHeader->addWidget(hint); layout->addLayout(selectionHeader);
     timeline_ = new Timeline; timeline_->setFocusPolicy(Qt::ClickFocus); layout->addWidget(timeline_);
     auto *clipRow = new QHBoxLayout;
     in_ = new FrameTimeEdit(*player_); out_ = new FrameTimeEdit(*player_);
@@ -334,7 +334,7 @@ void EditorWindow::openMedia(const QUrl &source, const QString &title, const QSt
     selectionKey_ = selectionKey;
     updateMediaDuration(duration);
     title_->setText(title); title_->setToolTip(title);
-    status_->setText("Drag the IN and OUT handles. Choose an export mode and Save selection.");
+    status_->setText("Click the track or drag a handle to set IN and OUT. Choose an export mode and Save selection.");
     player_->setSource(source); player_->pause();
     updateSelectionActions();
 }

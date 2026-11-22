@@ -21,7 +21,7 @@ QString timeText(qint64 ms) {
 Timeline::Timeline(QWidget *parent) : QWidget(parent) {
     setMinimumHeight(108);
     setMinimumWidth(320);
-    setToolTip("Left-drag the IN or OUT handle\nShift-click: seek");
+    setToolTip("Left-click the track to move the closest marker\nLeft-drag an IN or OUT handle\nShift-click: seek");
     setAccessibleName("Selection timeline");
 }
 void Timeline::setDuration(qint64 value) {
@@ -47,18 +47,6 @@ QRect Timeline::handleRect(DragTarget marker, qreal x) const {
     const int left = std::clamp(qRound(x) - handleWidth / 2, 0, width() - handleWidth);
     const int top = marker == DragTarget::In ? trackTop - handleHeight - 4 : trackBottom + 4;
     return {left, top, handleWidth, handleHeight};
-}
-Timeline::DragTarget Timeline::markerAt(const QPoint &point) const {
-    const qreal inX = xAt(start_), outX = xAt(end_);
-    if (handleRect(DragTarget::In, inX).contains(point)) return DragTarget::In;
-    if (handleRect(DragTarget::Out, outX).contains(point)) return DragTarget::Out;
-    if (point.y() < trackTop || point.y() > trackBottom) return DragTarget::None;
-
-    const qreal toIn = qAbs(point.x() - inX);
-    const qreal toOut = qAbs(point.x() - outX);
-    if (qMin(toIn, toOut) > 6) return DragTarget::None;
-    if (toIn == toOut) return point.y() < trackTop + trackHeight / 2 ? DragTarget::In : DragTarget::Out;
-    return toIn < toOut ? DragTarget::In : DragTarget::Out;
 }
 void Timeline::paintEvent(QPaintEvent *) {
     QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
@@ -98,47 +86,53 @@ void Timeline::paintEvent(QPaintEvent *) {
     p.drawLine(QLineF(playhead, trackTop + 2, playhead, trackBottom - 2));
 }
 void Timeline::updateDrag(qreal x) {
-    const qint64 value = at(x - dragOffset_);
-    switch (dragTarget_) {
-    case DragTarget::In:
-        if (value == start_) return;
-        setSelection(value, end_);
-        break;
-    case DragTarget::Out:
-        if (value == end_) return;
-        setSelection(start_, value);
-        break;
-    case DragTarget::Seek:
-        break;
-    case DragTarget::None:
-        return;
-    }
-    emit seekRequested(value);
-}
-void Timeline::mousePressEvent(QMouseEvent *e) {
-    if (!duration_ || e->button() != Qt::LeftButton) {
-        e->ignore();
-        return;
-    }
-    if (e->modifiers() & Qt::ShiftModifier) {
-        dragTarget_ = DragTarget::Seek;
-        dragOffset_ = 0;
-        updateDrag(e->position().x());
-        return;
-    }
-    dragTarget_ = markerAt(e->position().toPoint());
     if (dragTarget_ == DragTarget::None) return;
-    const qint64 markerPosition = dragTarget_ == DragTarget::In ? start_ : end_;
-    dragOffset_ = e->position().x() - xAt(markerPosition);
+    const qint64 position = at(x - dragOffset_);
+    if (dragTarget_ != DragTarget::Seek) {
+        const qint64 start = dragTarget_ == DragTarget::In ? position : start_;
+        const qint64 end = dragTarget_ == DragTarget::Out ? position : end_;
+        if (start == start_ && end == end_) return;
+        setSelection(start, end);
+    }
+    emit seekRequested(position);
 }
-void Timeline::mouseMoveEvent(QMouseEvent *e) {
-    if (e->buttons() & Qt::LeftButton) updateDrag(e->position().x());
-}
-void Timeline::mouseReleaseEvent(QMouseEvent *e) {
-    if (e->button() != Qt::LeftButton) {
-        e->ignore();
+void Timeline::mousePressEvent(QMouseEvent *event) {
+    if (!duration_ || event->button() != Qt::LeftButton) {
+        event->ignore();
         return;
     }
-    if (dragTarget_ == DragTarget::In || dragTarget_ == DragTarget::Out) updateDrag(e->position().x());
+    const QPointF point = event->position();
+    dragOffset_ = 0;
+    if (event->modifiers() & Qt::ShiftModifier) {
+        dragTarget_ = DragTarget::Seek;
+    } else if (point.y() >= trackTop && point.y() <= trackBottom) {
+        const qreal toIn = qAbs(point.x() - xAt(start_));
+        const qreal toOut = qAbs(point.x() - xAt(end_));
+        const bool favorIn = toIn == toOut ? point.y() < trackTop + trackHeight / 2 : toIn < toOut;
+        dragTarget_ = favorIn ? DragTarget::In : DragTarget::Out;
+    } else {
+        dragTarget_ = DragTarget::None;
+        const QPoint click = point.toPoint();
+        for (auto marker : {DragTarget::In, DragTarget::Out}) {
+            const qreal markerX = xAt(marker == DragTarget::In ? start_ : end_);
+            if (handleRect(marker, markerX).contains(click)) {
+                dragTarget_ = marker;
+                dragOffset_ = point.x() - markerX;
+                break;
+            }
+        }
+        return;
+    }
+    updateDrag(point.x());
+}
+void Timeline::mouseMoveEvent(QMouseEvent *event) {
+    if (event->buttons() & Qt::LeftButton) updateDrag(event->position().x());
+}
+void Timeline::mouseReleaseEvent(QMouseEvent *event) {
+    if (event->button() != Qt::LeftButton) {
+        event->ignore();
+        return;
+    }
+    if (dragTarget_ != DragTarget::Seek) updateDrag(event->position().x());
     dragTarget_ = DragTarget::None;
 }

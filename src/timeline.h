@@ -28,7 +28,6 @@ private:
     qint64 at(qreal x) const;
     qreal xAt(qint64 value) const;
     QRect handleRect(DragTarget marker, qreal x) const;
-    DragTarget markerAt(const QPoint &point) const;
     void updateDrag(qreal x);
     DragTarget dragTarget_ = DragTarget::None;
     qreal dragOffset_ = 0;

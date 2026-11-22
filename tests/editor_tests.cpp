@@ -81,7 +81,6 @@ private slots:
         QVERIFY(!timeline.testAttribute(Qt::WA_SetCursor));
         QSignalSpy seek(&timeline, &Timeline::seekRequested);
         const QPoint middle(416, 40);
-        QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, middle);
         QTest::mouseClick(&timeline, Qt::RightButton, Qt::NoModifier, middle);
         QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(24, 14));
         QCOMPARE(timeline.start(), 0);
@@ -102,7 +101,8 @@ private slots:
         drag(QPoint(816, 66), QPoint(656, 66));
         QCOMPARE(timeline.end(), 8000); QCOMPARE(seek.count(), 2);
         QTest::mouseClick(&timeline, Qt::LeftButton, Qt::ShiftModifier, middle);
-        QCOMPARE(timeline.start(), 2000); QCOMPARE(seek.last().first().toLongLong(), 5000);
+        QCOMPARE(timeline.start(), 2000); QCOMPARE(timeline.end(), 8000);
+        QCOMPARE(seek.count(), 3); QCOMPARE(seek.last().first().toLongLong(), 5000);
 
         drag(QPoint(176, 14), QPoint(656, 14));
         QCOMPARE(timeline.start(), timeline.end());
@@ -110,6 +110,21 @@ private slots:
         QCOMPARE(timeline.start(), 8000);
         QCOMPARE(timeline.end(), 7000);
         timeline.setDuration(5000); QCOMPARE(timeline.start(), 0); QCOMPARE(timeline.end(), 5000);
+
+        seek.clear();
+        QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(216, 40));
+        QCOMPARE(timeline.start(), 1250);
+        QCOMPARE(timeline.end(), 5000);
+        QCOMPARE(seek.count(), 1);
+        QCOMPARE(seek.last().first().toLongLong(), 1250);
+        QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(616, 40));
+        QCOMPARE(timeline.start(), 1250);
+        QCOMPARE(timeline.end(), 3750);
+        QCOMPARE(seek.count(), 2);
+        QCOMPARE(seek.last().first().toLongLong(), 3750);
+        QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(218, 40));
+        QCOMPARE(timeline.start(), 1263);
+        QCOMPARE(timeline.end(), 3750);
     }
     void playbackAndSeek() {
         QMediaPlayer player; QVideoSink sink; QAudioOutput audio; audio.setMuted(true);
