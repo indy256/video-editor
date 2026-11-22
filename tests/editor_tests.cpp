@@ -78,6 +78,7 @@ private slots:
     }
     void timelineMouseSelection() {
         Timeline timeline; timeline.resize(832, 108); timeline.show(); timeline.setDuration(10000);
+        QVERIFY(!timeline.testAttribute(Qt::WA_SetCursor));
         QSignalSpy seek(&timeline, &Timeline::seekRequested);
         const QPoint middle(416, 40);
         QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, middle);
@@ -90,6 +91,7 @@ private slots:
         QTest::mousePress(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(24, 14));
         QTest::mouseMove(&timeline, QPoint(184, 14));
         QTRY_COMPARE(timeline.start(), 2000);
+        QVERIFY(!timeline.testAttribute(Qt::WA_SetCursor));
         QTest::mouseRelease(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(184, 14));
         QCOMPARE(timeline.start(), 2000);
         auto drag = [&](QPoint from, QPoint to) {
@@ -107,7 +109,6 @@ private slots:
         drag(QPoint(656, 66), QPoint(576, 66));
         QCOMPARE(timeline.start(), 8000);
         QCOMPARE(timeline.end(), 7000);
-        QVERIFY(timeline.start() > timeline.end());
         timeline.setDuration(5000); QCOMPARE(timeline.start(), 0); QCOMPARE(timeline.end(), 5000);
     }
     void playbackAndSeek() {
