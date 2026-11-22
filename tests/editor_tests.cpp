@@ -8,6 +8,7 @@
 #include <QVideoFrame>
 #include <QTemporaryDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPushButton>
@@ -17,6 +18,7 @@
 #include <QSlider>
 #include <QStyleOptionSpinBox>
 #include <QTimeEdit>
+#include <QTimer>
 #include <QVideoWidget>
 #include <QNetworkReply>
 #include <QUrlQuery>
@@ -468,6 +470,29 @@ private slots:
         QTest::keyClick(&window, Qt::Key_Escape);
         QTRY_VERIFY(!window.isVisible());
     }
+    void openFileShortcut() {
+        EditorWindow window; window.show(); window.activateWindow();
+        QTRY_VERIFY(window.isActiveWindow());
+        int dialogs = 0;
+        QTimer dismiss;
+        connect(&dismiss, &QTimer::timeout, &window, [&] {
+            if (auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+                ++dialogs;
+                dialog->reject();
+            }
+        });
+        dismiss.start(10);
+        QTest::keyClick(window.windowHandle(), Qt::Key_O, Qt::ControlModifier);
+        QCOMPARE(dialogs, 0);
+        QTest::keyClick(window.windowHandle(), Qt::Key_O);
+        QCOMPARE(dialogs, 1);
+        auto *url = findControl<QLineEdit>(window, "YouTube URL");
+        QVERIFY(url);
+        url->setFocus(); url->selectAll();
+        QTest::keyClicks(url, "video");
+        QCOMPARE(url->text(), QString("video"));
+        QCOMPARE(dialogs, 1);
+    }
     void playbackSliderSeeks() {
         EditorWindow window; window.show();
         auto *slider = findControl<QSlider>(window, "Playback position");
@@ -906,6 +931,7 @@ int main(int argc, char **argv) {
         if (!file.open(QIODevice::ReadOnly) || !output.open(stdout, QIODevice::WriteOnly)) return 1;
         auto data = file.readAll(); return output.write(data) == data.size() && output.flush() ? 0 : 1;
     }
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv); EditorTests tests; return QTest::qExec(&tests, argc, argv);
 }
 #include "editor_tests.moc"

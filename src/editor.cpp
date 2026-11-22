@@ -346,13 +346,15 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     });
     connect(&jobs_, &MediaJobs::failed, this, [this](const QString &message) { setBusy(false); status_->setText("Operation failed. See details."); QMessageBox::warning(this, "Video Editor", message); });
     connect(&jobs_, &MediaJobs::canceled, this, [this] { setBusy(false); status_->setText("Canceled."); });
-    auto addPlaybackShortcut = [this](Qt::Key key, auto action) {
+    const auto addShortcut = [this](Qt::Key key, auto action) {
         auto *shortcut = new QShortcut(QKeySequence(key), this, this, [this, key, action] {
-            if (!playbackReady()) return;
             if (key != Qt::Key_Pause && textFieldHasFocus()) return;
             action();
         });
         shortcut->setAutoRepeat(false);
+    };
+    const auto addPlaybackShortcut = [this, &addShortcut](Qt::Key key, auto action) {
+        addShortcut(key, [this, action] { if (playbackReady()) action(); });
     };
     addPlaybackShortcut(Qt::Key_Space, toggle);
     addPlaybackShortcut(Qt::Key_Left, playFromIn);
@@ -360,7 +362,8 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
         seekAndPlay(qMax(qint64(0), timeline_->end() - 1000));
     });
     addPlaybackShortcut(Qt::Key_Pause, toggle);
-    new QShortcut(QKeySequence::Open, this, this, &EditorWindow::chooseFile);
+    addShortcut(Qt::Key_O, [this] { chooseFile(); });
+    local_->setFocus();
     new QShortcut(QKeySequence::Save, this, this, &EditorWindow::saveSelection);
     new QShortcut(QKeySequence(Qt::Key_Escape), this, this, &QWidget::close);
     refreshSelection();
