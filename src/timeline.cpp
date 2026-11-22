@@ -5,11 +5,17 @@
 
 namespace {
 constexpr int trackInset = 16;
-constexpr int trackTop = 28;
+constexpr int handleWidth = 38;
+constexpr int labelHeight = 20;
+constexpr int handleGap = 3;
+constexpr int verticalPadding = 2;
+constexpr int trackTop = verticalPadding + labelHeight + handleGap;
 constexpr int trackHeight = 24;
 constexpr int trackBottom = trackTop + trackHeight;
-constexpr int handleWidth = 38;
-constexpr int handleHeight = 20;
+constexpr int outHandleTop = trackBottom + handleGap;
+constexpr int tickTop = trackBottom + 1;
+constexpr int tickBottom = tickTop + 2;
+constexpr int tickLabelTop = outHandleTop + 1;
 }
 
 QString timeText(qint64 ms, TimePrecision precision) {
@@ -25,7 +31,7 @@ QString timeText(qint64 ms, TimePrecision precision) {
         .arg(roundedUnits % unitsPerSecond, tenths ? 1 : 3, 10, QChar('0'));
 }
 Timeline::Timeline(QWidget *parent) : QWidget(parent) {
-    setMinimumHeight(108);
+    setMinimumHeight(tickLabelTop + labelHeight + verticalPadding);
     setMinimumWidth(320);
     setToolTip("Left-click the track to move the closest marker\nLeft-drag an IN or OUT handle\nShift-click: seek");
     setAccessibleName("Selection timeline");
@@ -51,8 +57,8 @@ qint64 Timeline::at(qreal x) const {
 }
 QRect Timeline::handleRect(DragTarget marker, qreal x) const {
     const int left = std::clamp(qRound(x) - handleWidth / 2, 0, width() - handleWidth);
-    const int top = marker == DragTarget::In ? trackTop - handleHeight - 4 : trackBottom + 4;
-    return {left, top, handleWidth, handleHeight};
+    const int top = marker == DragTarget::In ? verticalPadding : outHandleTop;
+    return {left, top, handleWidth, labelHeight};
 }
 void Timeline::paintEvent(QPaintEvent *) {
     QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
@@ -68,11 +74,12 @@ void Timeline::paintEvent(QPaintEvent *) {
     const int ticks = std::clamp(trackPixels / 105, 2, 8);
     for (int i = 0; i <= ticks; ++i) {
         int x = trackInset + trackPixels * i / ticks;
-        p.drawLine(x, 80, x, 85);
+        p.drawLine(x, tickTop, x, tickBottom);
         qint64 value = duration_ * i / ticks;
         const auto label = duration_ < 60000 ? QString::number(value / 1000.0, 'f', 1) + "s" : timeText(value).left(8);
         int labelWidth = p.fontMetrics().horizontalAdvance(label) + 8;
-        p.drawText(QRect(std::clamp(x - labelWidth / 2, 0, width() - labelWidth), 86, labelWidth, 20), Qt::AlignCenter, label);
+        p.drawText(QRect(std::clamp(x - labelWidth / 2, 0, width() - labelWidth),
+                         tickLabelTop, labelWidth, labelHeight), Qt::AlignCenter, label);
     }
     if (!duration_) return;
     const QColor markerColor("#63e6c6");

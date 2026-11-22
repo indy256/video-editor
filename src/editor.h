@@ -23,7 +23,7 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
     void openYouTube();
-    void openMedia(const QUrl &source, const QString &title, const QString &selectionKey, qint64 duration = 0);
+    void openMedia(const QUrl &source, const QString &selectionKey, qint64 duration = 0);
     void updateMediaDuration(qint64 duration);
     void chooseFile();
     void saveSelection();
@@ -42,7 +42,7 @@ private:
     Timeline *timeline_;
     QLineEdit *url_;
     QComboBox *loadMode_, *exportMode_;
-    QLabel *title_, *clock_, *selection_, *status_;
+    QLabel *clock_, *selection_, *status_;
     QPushButton *open_, *local_, *save_, *play_, *cancel_, *playSelection_;
     QProgressBar *progress_;
     QSlider *seek_, *volume_;

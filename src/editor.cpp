@@ -41,6 +41,8 @@
 namespace {
 constexpr int seekSliderMaximum = 1'000'000;
 constexpr qint64 millisecondsPerDay = 86'400'000;
+constexpr double windowHeightScale = 0.85;
+constexpr auto windowGeometryKey = "window/geometryV2";
 
 QString selectionSettingsKey(const QString &kind, const QString &identity) {
     const auto hash = QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Sha256).toHex();
@@ -177,12 +179,11 @@ private:
 
 EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     QSettings settings;
-    setWindowTitle("Video Editor"); resize(1120, 820); setMinimumSize(820, 680);
+    setWindowTitle("Video Editor");
+    setMinimumSize(820, qRound(680 * windowHeightScale));
+    resize(1120, qRound(820 * windowHeightScale));
     auto *root = new QWidget; setCentralWidget(root);
     auto *layout = new QVBoxLayout(root); layout->setContentsMargins(24, 20, 24, 20); layout->setSpacing(14);
-    auto *heading = new QHBoxLayout;
-    auto *brand = new QLabel("VIDEO EDITOR"); brand->setObjectName("brand"); heading->addWidget(brand);
-    heading->addStretch(); auto *tag = new QLabel("OPEN  /  SELECT  /  SAVE"); tag->setObjectName("muted"); heading->addWidget(tag); layout->addLayout(heading);
     auto *sourceRow = new QHBoxLayout;
     url_ = new QLineEdit; url_->setPlaceholderText("Paste a YouTube video URL..."); url_->setClearButtonEnabled(true); url_->setAccessibleName("YouTube URL");
     url_->setText(settings.value("youtube/url").toString());
@@ -192,7 +193,6 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     loadMode_->setAccessibleName("YouTube loading mode");
     loadMode_->setToolTip("Streaming starts without a full download. Preview resolution depends on combined streams; saved clips use up to 1080p. Download first caches the full video for offline seeking.");
     sourceRow->addWidget(url_, 1); sourceRow->addWidget(loadMode_); sourceRow->addWidget(open_); sourceRow->addWidget(local_); layout->addLayout(sourceRow);
-    title_ = new QLabel("Your next clip starts here"); title_->setObjectName("title"); title_->setTextFormat(Qt::PlainText); layout->addWidget(title_);
     previewArea_ = new QWidget;
     previewArea_->setObjectName("stage");
     previewArea_->setMinimumHeight(220);
@@ -226,11 +226,11 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     transport->addWidget(new QLabel("Volume"));
     transport->addWidget(volume_);
     layout->addLayout(transport);
-    seek_ = new PlaybackSlider; seek_->setRange(0, 0); seek_->setAccessibleName("Playback position"); layout->addWidget(seek_);
-    auto *selectionHeader = new QHBoxLayout;
-    auto *label = new QLabel("SELECT YOUR CLIP"); label->setObjectName("brand"); selectionHeader->addWidget(label); selectionHeader->addStretch();
-    auto *hint = new QLabel("Click: move closest marker    /    Drag handles    /    Shift-click: seek"); hint->setObjectName("muted"); selectionHeader->addWidget(hint); layout->addLayout(selectionHeader);
-    timeline_ = new Timeline; timeline_->setFocusPolicy(Qt::ClickFocus); layout->addWidget(timeline_);
+    auto *selectionLayout = new QVBoxLayout;
+    selectionLayout->setSpacing(0);
+    seek_ = new PlaybackSlider; seek_->setRange(0, 0); seek_->setAccessibleName("Playback position"); selectionLayout->addWidget(seek_);
+    timeline_ = new Timeline; timeline_->setFocusPolicy(Qt::ClickFocus); selectionLayout->addWidget(timeline_);
+    selectionLayout->addSpacing(12);
     auto *clipControls = new QHBoxLayout;
     clipControls->setSpacing(4);
     in_ = new FrameTimeEdit(*player_);
@@ -254,7 +254,8 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     clipControls->addWidget(exportMode_);
     save_ = new QPushButton("Save selection"); save_->setObjectName("primary");
     clipControls->addWidget(save_);
-    layout->addLayout(clipControls);
+    selectionLayout->addLayout(clipControls);
+    layout->addLayout(selectionLayout);
     const auto previousMode = settings.value("export/originalStreams", false).toBool() ? ExportMode::OriginalStreams : ExportMode::H264Mp4;
     constexpr int retiredH265VerySlowMode = 3;
     const int savedMode = settings.value("export/mode", int(previousMode)).toInt();
@@ -269,9 +270,6 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     statusRow->addWidget(status_, 1); statusRow->addWidget(progress_); statusRow->addWidget(cancel_); layout->addLayout(statusRow);
     setStyleSheet(R"(
         QMainWindow, QWidget { background: #141820; color: #e7ebf3; font-family: 'Segoe UI'; font-size: 13px; }
-        QLabel#brand { color: #63e6c6; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
-        QLabel#title { font-size: 19px; font-weight: 600; }
-        QLabel#muted { color: #929daf; font-size: 12px; }
         QWidget#stage, QLabel#empty { background: #090c11; border-radius: 8px; color: #8290a5; }
         QLineEdit, QTimeEdit, QComboBox { background: #1d2330; border: 1px solid #353e50; border-radius: 5px; padding: 9px; selection-background-color: #245b57; }
         QTimeEdit { padding: 9px 4px; }
@@ -357,14 +355,14 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     connect(&jobs_, &MediaJobs::progress, this, [this](int percent, const QString &message) {
         setBusy(true); status_->setText(message); progress_->setRange(0, percent < 0 ? 0 : 100); if (percent >= 0) progress_->setValue(percent);
     });
-    connect(&jobs_, &MediaJobs::downloaded, this, [this](const QString &path, const QString &title, const QString &videoId) {
+    connect(&jobs_, &MediaJobs::downloaded, this, [this](const QString &path, const QString &videoId) {
         setBusy(false);
         youtubePage_.clear();
-        openMedia(QUrl::fromLocalFile(path), title, youtubeSelectionKey(videoId, url_->text()));
+        openMedia(QUrl::fromLocalFile(path), youtubeSelectionKey(videoId, url_->text()));
     });
-    connect(&jobs_, &MediaJobs::streamReady, this, [this](const QUrl &url, const QString &title, qint64 duration, int height, const QString &videoId) {
+    connect(&jobs_, &MediaJobs::streamReady, this, [this](const QUrl &url, qint64 duration, int height, const QString &videoId) {
         setBusy(false); youtubePage_ = url_->text().trimmed();
-        openMedia(url, title, youtubeSelectionKey(videoId, youtubePage_), duration);
+        openMedia(url, youtubeSelectionKey(videoId, youtubePage_), duration);
         status_->setText(QString("Streaming preview: %1p. Seek anywhere; Save selection fetches the interval at up to 1080p.").arg(height));
     });
     connect(&jobs_, &MediaJobs::exported, this, [this](const QString &path) {
@@ -394,7 +392,11 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     new QShortcut(QKeySequence::Save, this, this, &EditorWindow::saveSelection);
     new QShortcut(QKeySequence(Qt::Key_Escape), this, this, &QWidget::close);
     refreshSelection();
-    restoreGeometry(settings.value("window/geometry").toByteArray());
+    if (!restoreGeometry(settings.value(windowGeometryKey).toByteArray())
+        && restoreGeometry(settings.value("window/geometry").toByteArray())
+        && !isMaximized() && !isFullScreen()) {
+        resize(width(), qRound(height() * windowHeightScale));
+    }
 }
 bool EditorWindow::eventFilter(QObject *watched, QEvent *event) {
     switch (event->type()) {
@@ -480,11 +482,12 @@ void EditorWindow::openFile(const QString &path) {
     const QFileInfo file(path);
     if (!file.isFile()) { status_->setText("File does not exist: " + path); return; }
     youtubePage_.clear();
+    const QString absolutePath = file.absoluteFilePath();
     const QString canonicalPath = file.canonicalFilePath();
-    const auto key = selectionSettingsKey("file", canonicalPath.isEmpty() ? file.absoluteFilePath() : canonicalPath);
-    openMedia(QUrl::fromLocalFile(file.absoluteFilePath()), file.fileName(), key);
+    const auto key = selectionSettingsKey("file", canonicalPath.isEmpty() ? absolutePath : canonicalPath);
+    openMedia(QUrl::fromLocalFile(absolutePath), key);
 }
-void EditorWindow::openMedia(const QUrl &source, const QString &title, const QString &selectionKey, qint64 duration) {
+void EditorWindow::openMedia(const QUrl &source, const QString &selectionKey, qint64 duration) {
     if (source == player_->source() && player_->duration() > 0) duration = player_->duration();
     timeline_->cancelDrag();
     seek_->setSliderDown(false);
@@ -492,7 +495,6 @@ void EditorWindow::openMedia(const QUrl &source, const QString &title, const QSt
     player_->stop();
     selectionKey_ = selectionKey;
     updateMediaDuration(duration);
-    title_->setText(title); title_->setToolTip(title);
     status_->setText("Click the track or drag a handle to set IN and OUT. Choose an export mode and Save selection.");
     player_->setSource(source); player_->pause();
     updateSelectionActions();
@@ -568,7 +570,7 @@ void EditorWindow::closeEvent(QCloseEvent *event) {
         if (QMessageBox::question(this, "Operation in progress", "Cancel the operation and close?") != QMessageBox::Yes) { event->ignore(); return; }
         jobs_.cancel();
     }
-    QSettings().setValue("window/geometry", saveGeometry());
+    QSettings().setValue(windowGeometryKey, saveGeometry());
     pendingSeek_.reset();
     player_->stop(); player_->setSource(QUrl()); event->accept();
 }

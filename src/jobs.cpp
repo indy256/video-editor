@@ -282,7 +282,7 @@ void MediaJobs::finish(int code, QProcess::ExitStatus status) {
         auto metadata = QJsonDocument::fromJson(json.readAll()).object();
         if (cache_) retiredCaches_.push_back(std::move(cache_));
         cache_ = std::move(pendingCache_);
-        emit downloaded(source, metadata.value("title").toString("YouTube video"), metadata.value("id").toString());
+        emit downloaded(source, metadata.value("id").toString());
     } else {
         if (QFileInfo(staging_).size() == 0) { fail("FFmpeg produced an empty file."); return; }
 #ifdef Q_OS_WIN
@@ -347,7 +347,7 @@ void MediaJobs::useResolved(const QJsonObject &info, bool forExport) {
         const QString videoId = info.value("id").toString();
         const QUrl url = bridge_.add(info, {}, videoId);
         if (url.isEmpty()) { fail("No seekable HTTP preview is available. Choose Download first."); return; }
-        emit streamReady(url, info.value("title").toString("YouTube video"), qRound64(info.value("duration").toDouble() * 1000), info.value("height").toInt(), videoId);
+        emit streamReady(url, qRound64(info.value("duration").toDouble() * 1000), info.value("height").toInt(), videoId);
         return;
     }
     QJsonArray formats = info.value("requested_formats").toArray();

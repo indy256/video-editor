@@ -31,8 +31,8 @@ public:
     void cancel();
 signals:
     void progress(int percent, const QString &message);
-    void downloaded(const QString &path, const QString &title, const QString &videoId);
-    void streamReady(const QUrl &url, const QString &title, qint64 duration, int height, const QString &videoId);
+    void downloaded(const QString &path, const QString &videoId);
+    void streamReady(const QUrl &url, qint64 duration, int height, const QString &videoId);
     void exported(const QString &path);
     void failed(const QString &message);
     void canceled();

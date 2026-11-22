@@ -80,7 +80,7 @@ private slots:
         QVERIFY(!isYouTubeUrl("--exec something"));
     }
     void timelineMouseSelection() {
-        Timeline timeline; timeline.resize(832, 108); timeline.show(); timeline.setDuration(10000);
+        Timeline timeline; timeline.resize(832, timeline.minimumHeight()); timeline.show(); timeline.setDuration(10000);
         QVERIFY(!timeline.testAttribute(Qt::WA_SetCursor));
         QSignalSpy seek(&timeline, &Timeline::seekRequested);
         const QPoint middle(416, 40);
@@ -403,8 +403,9 @@ private slots:
         exportMode->setCurrentIndex(exportMode->findData(int(ExportMode::OriginalStreams)));
         QCOMPARE(exportMode->currentData().toInt(), int(ExportMode::OriginalStreams));
         QVERIFY(save->isEnabled());
-        for (int width : {normalSize.width(), window.minimumWidth()}) {
-            window.resize(width, normalSize.height());
+        for (const QSize size : {normalSize, window.minimumSize()}) {
+            window.resize(size);
+            QVERIFY(video->mapTo(window.centralWidget(), video->rect().bottomLeft()).y() < play->y());
             const int rowY = exportMode->geometry().center().y();
             QVERIFY(qAbs(formatLabel->geometry().center().y() - rowY) <= 1);
             int previousRight = -1;
@@ -583,7 +584,7 @@ private slots:
         auto *player = window.findChild<QMediaPlayer *>();
         auto *video = window.findChild<QVideoWidget *>();
         QVERIFY(jobs); QVERIFY(timeline); QVERIFY(player); QVERIFY(video);
-        jobs->streamReady(QUrl::fromLocalFile(source), "Seek fixture", 5000, 180, "seek-fixture");
+        jobs->streamReady(QUrl::fromLocalFile(source), 5000, 180, "seek-fixture");
         timeline->seekRequested(1000);
         timeline->seekRequested(2500);
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
@@ -599,6 +600,8 @@ private slots:
         QByteArray savedGeometry;
         {
             EditorWindow window;
+            QCOMPARE(window.size(), QSize(1120, 697));
+            QCOMPARE(window.minimumSize(), QSize(820, 578));
             auto *volume = findControl<QSlider>(window, "Volume");
             auto *loadMode = findControl<QComboBox>(window, "YouTube loading mode");
             auto *exportMode = findControl<QComboBox>(window, "Export mode");
@@ -622,7 +625,7 @@ private slots:
         settings.sync();
         QCOMPARE(settings.value("export/directory").toString(), temp.path());
         QVERIFY(!savedGeometry.isEmpty());
-        QCOMPARE(settings.value("window/geometry").toByteArray(), savedGeometry);
+        QCOMPARE(settings.value("window/geometryV2").toByteArray(), savedGeometry);
 
         EditorWindow restored;
         auto *volume = findControl<QSlider>(restored, "Volume");
@@ -641,6 +644,17 @@ private slots:
         expectedWindow.setMinimumSize(restored.minimumSize());
         QVERIFY(expectedWindow.restoreGeometry(savedGeometry));
         QCOMPARE(restored.geometry(), expectedWindow.geometry());
+
+        settings.setValue("window/geometry", savedGeometry);
+        settings.remove("window/geometryV2");
+        {
+            EditorWindow upgraded;
+            QCOMPARE(upgraded.pos(), restored.pos());
+            const QSize compactSize(restored.width(), qRound(restored.height() * 0.85));
+            QCOMPARE(upgraded.size(), compactSize);
+            QVERIFY(upgraded.close());
+            QCOMPARE(EditorWindow().size(), compactSize);
+        }
 
         settings.setValue("export/mode", 3); // Retired H.265 veryslow preference.
         {
@@ -712,7 +726,7 @@ private slots:
             auto *url = findControl<QLineEdit>(window, "YouTube URL");
             QVERIFY(jobs); QVERIFY(timeline); QVERIFY(url);
             url->setText("https://www.youtube.com/watch?v=" + videoId);
-            jobs->streamReady(QUrl::fromLocalFile(source), "Selection fixture", 5000, 180, videoId);
+            jobs->streamReady(QUrl::fromLocalFile(source), 5000, 180, videoId);
             timeline->setSelection(600, 2700);
             QVERIFY(window.close());
         }
@@ -723,7 +737,7 @@ private slots:
         auto *url = findControl<QLineEdit>(restored, "YouTube URL");
         QVERIFY(jobs); QVERIFY(timeline); QVERIFY(url);
         url->setText("https://youtu.be/" + videoId);
-        jobs->downloaded(downloadedPath, "Selection fixture", videoId);
+        jobs->downloaded(downloadedPath, videoId);
         QTRY_COMPARE(timeline->start(), 600);
         QCOMPARE(timeline->end(), 2700);
     }
@@ -783,7 +797,7 @@ private slots:
         QCOMPARE(errors.count(), 0); QCOMPARE(ready.count(), 1); QCOMPARE(downloaded.count(), 0);
         const QUrl stream = ready.first().at(0).toUrl();
         QCOMPARE(stream.host(), QString("127.0.0.1"));
-        qint64 duration = ready.first().at(2).toLongLong(); QVERIFY(duration > 0);
+        qint64 duration = ready.first().at(1).toLongLong(); QVERIFY(duration > 0);
         qInfo() << "Stream preview height:" << ready.first().at(3).toInt() << "duration ms:" << duration;
         QMediaPlayer player; QVideoSink sink; QAudioOutput audio; audio.setMuted(true);
         player.setVideoSink(&sink); player.setAudioOutput(&audio); player.setSource(stream); player.play();
@@ -972,7 +986,7 @@ private slots:
             QTest::qWait(100); QCOMPARE(ready.count(), 0); QCOMPARE(errors.count(), 0); return;
         }
         QTRY_COMPARE_WITH_TIMEOUT(ready.count(), 1, 5000); QVERIFY(!jobs.busy()); QCOMPARE(heads, 1); QCOMPARE(gets, headSupported ? 0 : 1);
-        QCOMPARE(ready.first().at(4).toString(), QString("size-probe"));
+        QCOMPARE(ready.first().last().toString(), QString("size-probe"));
         QNetworkAccessManager client; auto *reply = client.head(QNetworkRequest(ready.first().first().toUrl())); QSignalSpy done(reply, &QNetworkReply::finished);
         QTRY_VERIFY_WITH_TIMEOUT(!done.isEmpty(), 5000); QCOMPARE(reply->error(), QNetworkReply::NoError);
         QCOMPARE(reply->rawHeader("Content-Length").toLongLong(), exactSize); reply->deleteLater();
