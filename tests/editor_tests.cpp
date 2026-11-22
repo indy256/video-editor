@@ -125,6 +125,32 @@ private slots:
         QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(218, 40));
         QCOMPARE(timeline.start(), 1263);
         QCOMPARE(timeline.end(), 3750);
+
+        seek.clear();
+        QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(616, 40));
+        QCOMPARE(timeline.end(), 3750);
+        QCOMPARE(seek.count(), 1);
+        QCOMPARE(seek.last().first().toLongLong(), 3750);
+
+        seek.clear();
+        QTest::mousePress(&timeline, Qt::LeftButton, Qt::ShiftModifier, middle);
+        QTest::mouseRelease(&timeline, Qt::LeftButton, Qt::ShiftModifier, QPoint(656, 40));
+        QCOMPARE(seek.count(), 2);
+        QCOMPARE(seek.last().first().toLongLong(), 4000);
+        QCOMPARE(timeline.start(), 1263);
+        QCOMPARE(timeline.end(), 3750);
+
+        // The player can refine a stream's initial duration during the drag.
+        QTest::mousePress(&timeline, Qt::LeftButton, Qt::ShiftModifier, middle);
+        timeline.setDuration(10000);
+        QTest::mouseRelease(&timeline, Qt::LeftButton, Qt::ShiftModifier, QPoint(656, 40));
+        QCOMPARE(seek.last().first().toLongLong(), 8000);
+
+        timeline.setPosition(8000);
+        QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(24, 14));
+        QCOMPARE(seek.last().first().toLongLong(), timeline.start());
+        QTest::mouseClick(&timeline, Qt::LeftButton, Qt::NoModifier, QPoint(816, 66));
+        QCOMPARE(seek.last().first().toLongLong(), timeline.end());
     }
     void playbackAndSeek() {
         QMediaPlayer player; QVideoSink sink; QAudioOutput audio; audio.setMuted(true);
@@ -396,6 +422,13 @@ private slots:
         QTRY_VERIFY(positions.contains(QVariantList{timeline->start()}));
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
 
+        const QPoint pastOut(timeline->width() * 4 / 5, 40);
+        QTest::mouseClick(timeline, Qt::LeftButton, Qt::ShiftModifier, pastOut);
+        QTRY_VERIFY(player->position() > timeline->end());
+        QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+        QCOMPARE(timeline->start(), 1250);
+        QCOMPARE(timeline->end(), 3500);
+
         const auto checkPauseAndResume = [&](auto toggle) {
             QTest::mouseClick(timeline, Qt::LeftButton, Qt::ShiftModifier, seekPoint);
             QTRY_VERIFY(player->position() > timeline->start() + 1000);
@@ -434,6 +467,43 @@ private slots:
         QCOMPARE(player->position(), timeline->end());
         QTest::keyClick(&window, Qt::Key_Escape);
         QTRY_VERIFY(!window.isVisible());
+    }
+    void playbackSliderSeeks() {
+        EditorWindow window; window.show();
+        auto *slider = findControl<QSlider>(window, "Playback position");
+        auto *player = window.findChild<QMediaPlayer *>();
+        auto *video = window.findChild<QVideoWidget *>();
+        QVERIFY(slider); QVERIFY(player); QVERIFY(video);
+        window.openFile(source);
+        QTRY_VERIFY(player->isSeekable() && player->playbackState() == QMediaPlayer::PausedState);
+        const auto point = [&](int percent) {
+            return slider->mapTo(&window, QPoint(slider->width() * percent / 100, slider->height() / 2));
+        };
+        auto *handle = window.windowHandle();
+        for (int percent : {75, 20, 80, 25}) {
+            QTest::mouseClick(handle, Qt::LeftButton, Qt::NoModifier, point(percent));
+            QVERIFY(qAbs(player->position() - player->duration() * percent / 100) < 75);
+        }
+        QTest::mousePress(handle, Qt::LeftButton, Qt::NoModifier, point(25));
+        QTest::mouseMove(handle, point(65));
+        QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, point(50));
+        QVERIFY(qAbs(player->position() - 2500) < 75);
+        QTRY_VERIFY(qAbs(video->videoSink()->videoFrame().startTime() - 2500000) < 75000);
+        QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    }
+    void timelineSeekWhileLoading() {
+        EditorWindow window;
+        auto *jobs = window.findChild<MediaJobs *>();
+        auto *timeline = window.findChild<Timeline *>();
+        auto *player = window.findChild<QMediaPlayer *>();
+        auto *video = window.findChild<QVideoWidget *>();
+        QVERIFY(jobs); QVERIFY(timeline); QVERIFY(player); QVERIFY(video);
+        jobs->streamReady(QUrl::fromLocalFile(source), "Seek fixture", 5000, 180, "seek-fixture");
+        timeline->seekRequested(1000);
+        timeline->seekRequested(2500);
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+        QTRY_COMPARE(player->position(), 2500);
+        QTRY_VERIFY(qAbs(video->videoSink()->videoFrame().startTime() - 2500000) <= 34000);
     }
     void settingsPersistence() {
         QSettings settings;

@@ -12,6 +12,7 @@ public:
     qint64 start() const { return start_; }
     qint64 end() const { return end_; }
     void setDuration(qint64 value);
+    void cancelDrag() { dragTarget_ = DragTarget::None; }
     void setPosition(qint64 value);
     void setSelection(qint64 start, qint64 end);
 signals:
@@ -31,5 +32,6 @@ private:
     void updateDrag(qreal x);
     DragTarget dragTarget_ = DragTarget::None;
     qreal dragOffset_ = 0;
+    qint64 lastDragPosition_ = -1;
     qint64 duration_ = 0, position_ = 0, start_ = 0, end_ = 0;
 };

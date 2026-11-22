@@ -1,5 +1,6 @@
 #pragma once
 #include <QMainWindow>
+#include <optional>
 #include "jobs.h"
 class QMediaPlayer;
 class QLineEdit;
@@ -30,6 +31,8 @@ private:
     void updateSelectionActions();
     void setBusy(bool busy);
     void togglePlayback();
+    void seekTo(qint64 position);
+    void applyPendingSeek();
     void seekAndPlay(qint64 position);
     bool playbackReady() const;
     bool textFieldHasFocus() const;
@@ -51,5 +54,7 @@ private:
         bool moving = false;
     };
     WindowDrag windowDrag_;
+    std::optional<qint64> pendingSeek_;
+    bool seeking_ = false;
     bool busy_ = false;
 };

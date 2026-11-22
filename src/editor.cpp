@@ -19,11 +19,13 @@
 #include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QShortcut>
 #include <QSettings>
 #include <QSlider>
 #include <QStandardPaths>
 #include <QStyle>
+#include <QStyleOptionSlider>
 #include <QStyleOptionSpinBox>
 #include <QTimeEdit>
 #include <QVBoxLayout>
@@ -47,6 +49,43 @@ QString selectionSettingsKey(const QString &kind, const QString &identity) {
 QString youtubeSelectionKey(const QString &videoId, const QString &page) {
     return selectionSettingsKey("youtube", videoId.isEmpty() ? page.trimmed() : videoId);
 }
+
+class PlaybackSlider final : public QSlider {
+public:
+    PlaybackSlider() : QSlider(Qt::Horizontal) {}
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override {
+        if (event->button() != Qt::LeftButton) return QSlider::mousePressEvent(event);
+        scrubTo(event->position().toPoint(), true);
+    }
+
+    void mouseMoveEvent(QMouseEvent *event) override {
+        if (isSliderDown() && event->buttons().testFlag(Qt::LeftButton)) scrubTo(event->position().toPoint());
+        else QSlider::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        if (!isSliderDown() || event->button() != Qt::LeftButton) return QSlider::mouseReleaseEvent(event);
+        scrubTo(event->position().toPoint());
+        setSliderDown(false);
+    }
+
+private:
+    void scrubTo(QPoint point, bool beginDrag = false) {
+        QStyleOptionSlider option;
+        initStyleOption(&option);
+        const auto groove = style()->subControlRect(QStyle::CC_Slider, &option, QStyle::SC_SliderGroove, this);
+        const auto handle = style()->subControlRect(QStyle::CC_Slider, &option, QStyle::SC_SliderHandle, this);
+        if (beginDrag) {
+            grabOffset_ = handle.contains(point) ? point.x() - handle.left() : handle.width() / 2;
+            setSliderDown(true);
+        }
+        setSliderPosition(QStyle::sliderValueFromPosition(minimum(), maximum(), point.x() - grabOffset_ - groove.left(),
+                                                          groove.width() - handle.width(), option.upsideDown));
+    }
+    int grabOffset_ = 0;
+};
 
 class FrameTimeEdit final : public QTimeEdit {
 public:
@@ -158,7 +197,7 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     transport->addWidget(new QLabel("Volume"));
     transport->addWidget(volume);
     layout->addLayout(transport);
-    seek_ = new QSlider(Qt::Horizontal); seek_->setRange(0, 0); seek_->setAccessibleName("Playback position"); layout->addWidget(seek_);
+    seek_ = new PlaybackSlider; seek_->setRange(0, 0); seek_->setAccessibleName("Playback position"); layout->addWidget(seek_);
     auto *selectionHeader = new QHBoxLayout;
     auto *label = new QLabel("SELECT YOUR CLIP"); label->setObjectName("brand"); selectionHeader->addWidget(label); selectionHeader->addStretch();
     auto *hint = new QLabel("Click: move closest marker    /    Drag handles    /    Shift-click: seek"); hint->setObjectName("muted"); selectionHeader->addWidget(hint); layout->addLayout(selectionHeader);
@@ -238,10 +277,10 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
         audio->setVolume(value / 100.f);
         QSettings().setValue("playback/volume", value);
     });
-    connect(seek_, &QSlider::sliderMoved, this, [this](int pos) {
-        player_->setPosition(qint64(double(pos) / seekSliderMaximum * player_->duration()));
+    connect(seek_, &QSlider::actionTriggered, this, [this] {
+        seekTo(qRound64(double(seek_->sliderPosition()) / seekSliderMaximum * timeline_->duration()));
     });
-    connect(timeline_, &Timeline::seekRequested, player_, &QMediaPlayer::setPosition);
+    connect(timeline_, &Timeline::seekRequested, this, &EditorWindow::seekTo);
     connect(timeline_, &Timeline::selectionChanged, this, [this](qint64 start, qint64 end) {
         if (!selectionKey_.isEmpty() && timeline_->duration() > 0)
             QSettings().setValue(selectionKey_, QVariantList{start, end});
@@ -249,16 +288,17 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     });
     connect(in_, &QTimeEdit::timeChanged, this, [this](QTime time) {
         timeline_->setSelection(time.msecsSinceStartOfDay(), timeline_->end());
-        player_->setPosition(timeline_->start());
+        seekTo(timeline_->start());
     });
     connect(out_, &QTimeEdit::timeChanged, this, [this](QTime time) {
         timeline_->setSelection(timeline_->start(), time.msecsSinceStartOfDay());
-        player_->setPosition(timeline_->end());
+        seekTo(timeline_->end());
     });
     connect(player_, &QMediaPlayer::durationChanged, this, &EditorWindow::updateMediaDuration);
     connect(player_, &QMediaPlayer::positionChanged, this, [this](qint64 pos) {
         const qint64 out = timeline_->end();
-        const bool reachedOut = player_->isPlaying() && timeline_->position() < out && pos >= out;
+        const bool reachedOut = player_->isPlaying() && timeline_->position() < out && pos >= out &&
+            (!seeking_ || pos == out);
         const qint64 duration = player_->duration();
         timeline_->setPosition(pos);
         if (!seek_->isSliderDown()) seek_->setValue(duration ? int(double(pos) / duration * seekSliderMaximum) : 0);
@@ -274,14 +314,17 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     };
     updatePlayButton(player_->isPlaying());
     connect(player_, &QMediaPlayer::playingChanged, this, updatePlayButton);
+    connect(player_, &QMediaPlayer::seekableChanged, this, &EditorWindow::applyPendingSeek);
     connect(player_, &QMediaPlayer::mediaStatusChanged, this, [this, stack, video](QMediaPlayer::MediaStatus state) {
         if (state == QMediaPlayer::LoadedMedia || state == QMediaPlayer::BufferedMedia) {
             stack->setCurrentWidget(video);
             play_->setEnabled(true);
             updateSelectionActions();
+            applyPendingSeek();
         }
     });
     connect(player_, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &message) {
+        pendingSeek_.reset();
         play_->setEnabled(false); updateMediaDuration(0); status_->setText("Playback failed: " + message + (youtubePage_.isEmpty() ? "" : " Reopen the YouTube link to refresh the stream, or choose Download first."));
     });
     connect(&jobs_, &MediaJobs::progress, this, [this](int percent, const QString &message) {
@@ -371,8 +414,20 @@ bool EditorWindow::eventFilter(QObject *watched, QEvent *event) {
 void EditorWindow::togglePlayback() {
     if (player_->isPlaying()) player_->pause(); else player_->play();
 }
-void EditorWindow::seekAndPlay(qint64 position) {
+void EditorWindow::seekTo(qint64 position) {
+    pendingSeek_ = position;
+    applyPendingSeek();
+}
+void EditorWindow::applyPendingSeek() {
+    if (!pendingSeek_ || !player_->isSeekable() || player_->mediaStatus() == QMediaPlayer::LoadingMedia) return;
+    const qint64 position = *pendingSeek_;
+    pendingSeek_.reset();
+    // A jump across OUT is different from playing through it.
+    const QScopedValueRollback guard(seeking_, true);
     player_->setPosition(position);
+}
+void EditorWindow::seekAndPlay(qint64 position) {
+    seekTo(position);
     player_->play();
 }
 bool EditorWindow::playbackReady() const {
@@ -397,6 +452,9 @@ void EditorWindow::openFile(const QString &path) {
 }
 void EditorWindow::openMedia(const QUrl &source, const QString &title, const QString &selectionKey, qint64 duration) {
     if (source == player_->source() && player_->duration() > 0) duration = player_->duration();
+    timeline_->cancelDrag();
+    seek_->setSliderDown(false);
+    pendingSeek_.reset();
     player_->stop();
     selectionKey_ = selectionKey;
     updateMediaDuration(duration);
@@ -477,5 +535,6 @@ void EditorWindow::closeEvent(QCloseEvent *event) {
         jobs_.cancel();
     }
     QSettings().setValue("window/geometry", saveGeometry());
+    pendingSeek_.reset();
     player_->stop(); player_->setSource(QUrl()); event->accept();
 }

@@ -25,8 +25,8 @@ Timeline::Timeline(QWidget *parent) : QWidget(parent) {
     setAccessibleName("Selection timeline");
 }
 void Timeline::setDuration(qint64 value) {
-    dragTarget_ = DragTarget::None;
     duration_ = std::max(qint64(0), value);
+    if (!duration_) cancelDrag();
     position_ = 0;
     setSelection(0, duration_);
 }
@@ -88,12 +88,10 @@ void Timeline::paintEvent(QPaintEvent *) {
 void Timeline::updateDrag(qreal x) {
     if (dragTarget_ == DragTarget::None) return;
     const qint64 position = at(x - dragOffset_);
-    if (dragTarget_ != DragTarget::Seek) {
-        const qint64 start = dragTarget_ == DragTarget::In ? position : start_;
-        const qint64 end = dragTarget_ == DragTarget::Out ? position : end_;
-        if (start == start_ && end == end_) return;
-        setSelection(start, end);
-    }
+    if (position == lastDragPosition_) return;
+    lastDragPosition_ = position;
+    if (dragTarget_ == DragTarget::In && start_ != position) setSelection(position, end_);
+    else if (dragTarget_ == DragTarget::Out && end_ != position) setSelection(start_, position);
     emit seekRequested(position);
 }
 void Timeline::mousePressEvent(QMouseEvent *event) {
@@ -103,6 +101,7 @@ void Timeline::mousePressEvent(QMouseEvent *event) {
     }
     const QPointF point = event->position();
     dragOffset_ = 0;
+    lastDragPosition_ = -1;
     if (event->modifiers() & Qt::ShiftModifier) {
         dragTarget_ = DragTarget::Seek;
     } else if (point.y() >= trackTop && point.y() <= trackBottom) {
@@ -114,10 +113,12 @@ void Timeline::mousePressEvent(QMouseEvent *event) {
         dragTarget_ = DragTarget::None;
         const QPoint click = point.toPoint();
         for (auto marker : {DragTarget::In, DragTarget::Out}) {
-            const qreal markerX = xAt(marker == DragTarget::In ? start_ : end_);
+            const qint64 markerPosition = marker == DragTarget::In ? start_ : end_;
+            const qreal markerX = xAt(markerPosition);
             if (handleRect(marker, markerX).contains(click)) {
                 dragTarget_ = marker;
                 dragOffset_ = point.x() - markerX;
+                if (position_ == markerPosition) lastDragPosition_ = markerPosition;
                 break;
             }
         }
@@ -133,6 +134,6 @@ void Timeline::mouseReleaseEvent(QMouseEvent *event) {
         event->ignore();
         return;
     }
-    if (dragTarget_ != DragTarget::Seek) updateDrag(event->position().x());
-    dragTarget_ = DragTarget::None;
+    updateDrag(event->position().x());
+    cancelDrag();
 }
