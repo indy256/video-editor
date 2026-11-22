@@ -32,11 +32,24 @@ if(MSVC)
 endif()
 qt_add_executable(VideoEditor WIN32 MACOSX_BUNDLE src/main.cpp)
 target_link_libraries(VideoEditor PRIVATE editor_core)
+qt_add_resources(VideoEditor app_icon
+  PREFIX "/"
+  BASE "${CMAKE_CURRENT_SOURCE_DIR}/packaging"
+  FILES packaging/video-editor.png)
 set_target_properties(VideoEditor PROPERTIES
   MACOSX_BUNDLE_GUI_IDENTIFIER com.github.indy256.video-editor
   MACOSX_BUNDLE_BUNDLE_NAME "Video Editor"
   MACOSX_BUNDLE_BUNDLE_VERSION "${VIDEO_EDITOR_VERSION}"
   MACOSX_BUNDLE_SHORT_VERSION_STRING "${VIDEO_EDITOR_VERSION}")
+if(WIN32)
+  enable_language(RC)
+  include(packaging/windows/icon.cmake)
+  video_editor_add_windows_icon(VideoEditor)
+elseif(APPLE)
+  set_source_files_properties(packaging/video-editor.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  target_sources(VideoEditor PRIVATE packaging/video-editor.icns)
+  set_target_properties(VideoEditor PROPERTIES MACOSX_BUNDLE_ICON_FILE "video-editor.icns")
+endif()
 
 option(VIDEO_EDITOR_DEPLOY "Install the application, Qt runtime and helpers" OFF)
 if(VIDEO_EDITOR_DEPLOY)
@@ -62,7 +75,7 @@ if(VIDEO_EDITOR_DEPLOY)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_target_properties(VideoEditor PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
     install(FILES packaging/video-editor.desktop DESTINATION share/applications)
-    install(FILES packaging/video-editor.svg DESTINATION share/icons/hicolor/scalable/apps)
+    install(FILES packaging/video-editor.png DESTINATION share/icons/hicolor/512x512/apps)
     set(deploy_options POST_INCLUDE_REGEXES "/lib.*[.]so([.]|$)"
       PRE_EXCLUDE_REGEXES "^ld-linux.*[.]so[.]")
     foreach(library c m mvec pthread dl rt resolv util anl BrokenLocale thread_db)

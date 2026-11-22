@@ -1,0 +1,7 @@
+function(video_editor_add_windows_icon target)
+    set(icon "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../video-editor.ico")
+    set(resource "${CMAKE_CURRENT_BINARY_DIR}/video-editor-icon.rc")
+    file(CONFIGURE OUTPUT "${resource}" CONTENT "1 ICON \"@icon@\"\n" @ONLY)
+    set_source_files_properties("${resource}" PROPERTIES OBJECT_DEPENDS "${icon}")
+    target_sources(${target} PRIVATE "${resource}")
+endfunction()

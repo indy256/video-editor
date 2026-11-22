@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QIcon>
 #include <QMediaPlayer>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -39,6 +40,7 @@ int main(int argc, char **argv) {
     app.setApplicationName("VideoEditor"); app.setOrganizationName("VideoEditor");
     const auto arguments = app.arguments();
     if (arguments.value(1) == "--runtime-check") return checkRuntime(app, arguments.value(2));
+    app.setWindowIcon(QIcon(":/video-editor.png"));
     EditorWindow window; window.show();
     if (argc > 1) {
         const auto input = QString::fromLocal8Bit(argv[1]);

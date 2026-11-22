@@ -261,7 +261,7 @@ jobs:
           done
           cp packaging/AppRun AppDir/AppRun
           cp packaging/video-editor.desktop AppDir/
-          cp packaging/video-editor.svg AppDir/
+          cp packaging/video-editor.png AppDir/
           chmod +x AppDir/AppRun
           curl -fL --retry 3 -o appimagetool.AppImage https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool.AppImage
