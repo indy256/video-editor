@@ -186,23 +186,36 @@ private slots:
         jobs.exportClip(source, 2000, 1000, temp.filePath("invalid.mp4")); QCOMPARE(errors.count(), 2); QVERIFY(!QFile::exists(temp.filePath("invalid.mp4")));
     }
     void originalStreamExport_data() {
-        QTest::addColumn<bool>("withAudio");
-        QTest::newRow("h264-flac") << true;
-        QTest::newRow("video-only") << false;
+        QTest::addColumn<QString>("audioCodec");
+        QTest::addColumn<bool>("mp4Supported");
+        QTest::newRow("h264-aac") << QString("aac") << true;
+        QTest::newRow("h264-flac") << QString("flac") << true;
+        QTest::newRow("video-only") << QString() << true;
+        QTest::newRow("unsupported-audio") << QString("wmav2") << false;
     }
     void originalStreamExport() {
-        QFETCH(bool, withAudio);
-        const QString original = temp.filePath("original-streams.mkv"), destination = temp.filePath("copied-streams.mkv");
+        QFETCH(QString, audioCodec);
+        QFETCH(bool, mp4Supported);
+        const bool withAudio = !audioCodec.isEmpty();
+        const QString original = temp.filePath("original-streams.mkv"), destination = temp.filePath("copied-streams.mp4");
         QProcess ff;
         QStringList args{"-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30"};
         if (withAudio) args += QStringList{"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"};
         args += QStringList{"-t", "6", "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0", "-pix_fmt", "yuv420p"};
-        if (withAudio) args += QStringList{"-c:a", "flac"};
+        if (withAudio) args += QStringList{"-c:a", audioCodec};
         args += original; ff.start(findTool("ffmpeg"), args); QVERIFY(ff.waitForFinished(30000)); QCOMPARE(ff.exitCode(), 0);
         QFile existing(destination); QVERIFY(existing.open(QIODevice::WriteOnly)); existing.write("replace only after successful copy"); existing.close();
         MediaJobs jobs; QSignalSpy saved(&jobs, &MediaJobs::exported), errors(&jobs, &MediaJobs::failed);
         jobs.exportClip(original, 3250, 4750, destination, ExportMode::OriginalStreams);
         QTRY_VERIFY_WITH_TIMEOUT(!saved.isEmpty() || !errors.isEmpty(), 30000);
+        if (!mp4Supported) {
+            QCOMPARE(saved.count(), 0); QCOMPARE(errors.count(), 1);
+            QVERIFY(errors.first().first().toString().contains("Could not save the original streams as MP4"));
+            QVERIFY(existing.open(QIODevice::ReadOnly));
+            QCOMPARE(existing.readAll(), QByteArray("replace only after successful copy"));
+            QVERIFY(QDir(temp.path()).entryList({".video-editor-*"}, QDir::Files | QDir::Hidden).isEmpty());
+            return;
+        }
         if (!errors.isEmpty()) qWarning() << errors.first().first();
         QCOMPARE(errors.count(), 0); QCOMPARE(saved.count(), 1); QVERIFY(jobs.copiesOriginalStreams());
         QVERIFY(jobs.actualExportStart() >= 1900 && jobs.actualExportStart() <= 2100);
@@ -211,29 +224,33 @@ private slots:
             if (!probe.waitForFinished(15000) || probe.exitCode()) return QJsonArray();
             return QJsonDocument::fromJson(probe.readAllStandardOutput()).object().value("packets").toArray();
         };
+        const auto video = packets(destination, "v:0"), audio = packets(destination, "a:0");
         for (const auto &track : {QString("v:0"), QString("a:0")}) {
-            const auto before = packets(original, track), after = packets(destination, track);
-            if (track == "a:0" && !withAudio) { QVERIFY(after.isEmpty()); continue; }
+            const bool videoTrack = track == "v:0";
+            const auto &after = videoTrack ? video : audio;
+            if (!videoTrack && !withAudio) { QVERIFY(after.isEmpty()); continue; }
+            const auto before = packets(original, track);
             QVERIFY(!before.isEmpty()); QVERIFY(!after.isEmpty());
             QStringList beforeHashes, afterHashes;
             for (const auto &p : before) beforeHashes += p.toObject().value("data_hash").toString();
             for (const auto &p : after) afterHashes += p.toObject().value("data_hash").toString();
             const int first = beforeHashes.indexOf(afterHashes.first()); QVERIFY(first >= 0);
             QCOMPARE(afterHashes, beforeHashes.mid(first, afterHashes.size()));
-            if (track == "v:0") {
+            if (videoTrack) {
                 QVERIFY(after.first().toObject().value("flags").toString().contains('K'));
                 QVERIFY(qAbs(before[first].toObject().value("pts_time").toString().toDouble() - 2.0) < 0.1);
             }
         }
-        const auto video = packets(destination, "v:0"), audio = packets(destination, "a:0");
         if (withAudio) QVERIFY(qAbs(video.first().toObject().value("pts_time").toString().toDouble() - audio.first().toObject().value("pts_time").toString().toDouble()) < 0.15);
-        QProcess probe; probe.start(findTool("ffprobe"), {"-v", "error", "-show_entries", "format=duration:stream=codec_name", "-of", "json", destination});
+        QProcess probe; probe.start(findTool("ffprobe"), {"-v", "error", "-show_entries", "format=duration,format_name:stream=codec_name", "-of", "json", destination});
         QVERIFY(probe.waitForFinished(10000)); QCOMPARE(probe.exitCode(), 0);
         const auto info = QJsonDocument::fromJson(probe.readAllStandardOutput()).object();
-        const double duration = info.value("format").toObject().value("duration").toString().toDouble();
+        const auto format = info.value("format").toObject();
+        QVERIFY(format.value("format_name").toString().split(',').contains("mp4"));
+        const double duration = format.value("duration").toString().toDouble();
         // Packet DTS cutoffs and reordered frames can extend the last PTS.
         QVERIFY2(duration >= 2.65 && duration <= 3.05, qPrintable(QString::number(duration)));
-        if (withAudio) QCOMPARE(info.value("streams").toArray().last().toObject().value("codec_name").toString(), QString("flac"));
+        if (withAudio) QCOMPARE(info.value("streams").toArray().last().toObject().value("codec_name").toString(), audioCodec);
         QMediaPlayer player; QVideoSink sink; player.setVideoSink(&sink); player.setSource(QUrl::fromLocalFile(destination)); player.play();
         QTRY_VERIFY_WITH_TIMEOUT(sink.videoFrame().isValid(), 10000); player.stop(); player.setSource(QUrl());
     }
@@ -662,7 +679,7 @@ private slots:
         QCOMPARE(jobs.streamedBytes(), beforeReuse);
         qInfo() << "Reopened stream reused cached bytes without a CDN request; total cache bytes served:" << jobs.cachedBytesServed();
         cachedReply->deleteLater();
-        const QString originalCopy = temp.filePath("youtube-original.mkv");
+        const QString originalCopy = temp.filePath("youtube-original.mp4");
         jobs.exportYouTube(url, seekTime + 1250, seekTime + 3500, originalCopy, ExportMode::OriginalStreams);
         QTRY_VERIFY_WITH_TIMEOUT(saved.count() == 2 || !errors.isEmpty(), 90000);
         if (!errors.isEmpty()) qWarning() << errors.first().first();

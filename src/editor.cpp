@@ -177,19 +177,22 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     exportMode_->addItem("H.265 (MP4, slow)", int(ExportMode::H265Mp4));
     exportMode_->addItem("Original streams (no re-encoding)", int(ExportMode::OriginalStreams));
     exportRow->addWidget(new QLabel("Save as")); exportRow->addWidget(exportMode_);
-    auto *exportHint = new QLabel("MP4 with accurate selection boundaries"); exportHint->setObjectName("muted");
+    auto *exportHint = new QLabel; exportHint->setObjectName("muted");
     exportRow->addWidget(exportHint); exportRow->addStretch(); layout->addLayout(exportRow);
-    connect(exportMode_, &QComboBox::currentIndexChanged, this, [this, exportHint] {
-        const bool copy = exportMode_->currentData().toInt() == int(ExportMode::OriginalStreams);
-        exportHint->setText(copy ? "MKV; copies video and audio. Starts at the preceding keyframe." : "MP4 with accurate selection boundaries");
-    });
+    const auto updateExportHint = [exportHint](const QVariant &mode) {
+        const bool copy = mode.toInt() == int(ExportMode::OriginalStreams);
+        exportHint->setText(copy ? "MP4 stream copy from the preceding keyframe" : "MP4 with accurate selection boundaries");
+    };
     const auto previousMode = settings.value("export/originalStreams", false).toBool() ? ExportMode::OriginalStreams : ExportMode::H264Mp4;
     constexpr int retiredH265VerySlowMode = 3;
     const int savedMode = settings.value("export/mode", int(previousMode)).toInt();
     const int savedIndex = exportMode_->findData(savedMode == retiredH265VerySlowMode ? int(ExportMode::H265Mp4) : savedMode);
     exportMode_->setCurrentIndex(qMax(0, savedIndex));
-    connect(exportMode_, &QComboBox::currentIndexChanged, this, [this] {
-        QSettings().setValue("export/mode", exportMode_->currentData());
+    updateExportHint(exportMode_->currentData());
+    connect(exportMode_, &QComboBox::currentIndexChanged, this, [this, updateExportHint] {
+        const auto mode = exportMode_->currentData();
+        updateExportHint(mode);
+        QSettings().setValue("export/mode", mode);
     });
     auto *statusRow = new QHBoxLayout;
     status_ = new QLabel("Ready. Open a YouTube link or a local video."); status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true);
@@ -453,17 +456,14 @@ void EditorWindow::setBusy(bool busy) {
 void EditorWindow::saveSelection() {
     if (!save_->isEnabled()) return;
     const auto mode = static_cast<ExportMode>(exportMode_->currentData().toInt());
-    const bool copy = mode == ExportMode::OriginalStreams;
-    const QString extension = copy ? ".mkv" : ".mp4";
     QSettings settings;
     const QString movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
     QString directory = settings.value("export/directory", movies).toString();
     if (!QDir(directory).exists()) directory = movies;
-    QString path = QFileDialog::getSaveFileName(this, "Save selection", QDir(directory).filePath("v" + extension),
-        copy ? "Matroska video (*.mkv)" : "MP4 video (*.mp4)");
+    QString path = QFileDialog::getSaveFileName(this, "Save selection", QDir(directory).filePath("v.mp4"), "MP4 video (*.mp4)");
     if (path.isEmpty()) return;
-    if (!path.endsWith(extension, Qt::CaseInsensitive)) {
-        path += extension;
+    if (!path.endsWith(".mp4", Qt::CaseInsensitive)) {
+        path += ".mp4";
         if (QFileInfo::exists(path) && QMessageBox::question(this, "Replace file?", "Replace " + path + "?") != QMessageBox::Yes) return;
     }
     settings.setValue("export/directory", QFileInfo(path).absolutePath());

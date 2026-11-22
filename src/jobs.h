@@ -47,8 +47,8 @@ private:
     void prepareResolved(QJsonObject info, bool forExport, int attempt = 0, bool rangeProbe = false);
     void useResolved(const QJsonObject &info, bool forExport);
     bool prepareExport(qint64 start, qint64 end, const QString &destination, ExportMode mode);
-    void encode(const QStringList &inputs, const QString &audioMap);
-    void writeOutput(const QStringList &inputs, const QString &audioMap);
+    void startExport(const QUrl &video, const QUrl &audio = {});
+    void writeOutput();
     QProcess process_;
     RangeBridge bridge_;
     QNetworkAccessManager probeNetwork_;
@@ -63,7 +63,6 @@ private:
     qint64 exportDuration_ = 0;
     qint64 actualStartUs_ = 0;
     ExportMode exportMode_ = ExportMode::H264Mp4;
-    QStringList pendingInputs_;
-    QString pendingAudioMap_;
+    QUrl exportVideo_, exportAudio_;
     bool active_ = false, canceled_ = false;
 };
