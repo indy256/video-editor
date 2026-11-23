@@ -5,7 +5,6 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QUrl>
@@ -19,11 +18,19 @@
 #include <windows.h>
 #endif
 
-static const QString compatibleFormats = "bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/bv*[height<=1080][vcodec^=vp9]+ba/b[height<=1080][vcodec^=vp9]";
-static const QString previewFormats = "b[height<=1080][vcodec^=avc1][protocol=https]/b[height<=1080][vcodec^=avc1][protocol=http]";
+// Qt's bundled FFmpeg on Windows ARM64 can produce green frames with AV1.
+static const QString compatibleFormats =
+    "bv*[height<=1080][vcodec^=avc1]+ba/"
+    "b[height<=1080][vcodec^=avc1]/"
+    "bv*[height<=1080][vcodec^=vp9]+ba/"
+    "b[height<=1080][vcodec^=vp9]";
+static const QString previewFormats =
+    "b[height<=1080][vcodec^=avc1][protocol=https]/"
+    "b[height<=1080][vcodec^=avc1][protocol=http]";
 
-static QStringList downloaderArguments() {
-    QStringList arguments{"--ignore-config", "--no-playlist", "--no-colors"};
+static QStringList downloaderArguments(const QString &formats, const QString &timeout) {
+    QStringList arguments{"--ignore-config", "--no-playlist", "--no-colors",
+                          "--format", formats, "--socket-timeout", timeout, "--retries", "2"};
     const auto deno = findTool("deno");
     if (!deno.isEmpty()) arguments += QStringList{"--js-runtimes", "deno:" + deno};
     return arguments;
@@ -98,12 +105,8 @@ void MediaJobs::download(const QString &url) {
     if (tool.isEmpty() || ffmpeg.isEmpty()) { emit failed("YouTube needs yt-dlp and FFmpeg. Place them in the tools folder beside the app, or on PATH."); return; }
     pendingCache_ = std::make_unique<QTemporaryDir>(QDir::tempPath() + "/video-editor-XXXXXX");
     if (!pendingCache_->isValid()) { fail("Could not create the video cache."); return; }
-    startProcess(Operation::Download, tool, downloaderArguments() + QStringList{"--newline", "--no-mtime",
-        "--socket-timeout", "30", "--retries", "2", "--ffmpeg-location", ffmpeg,
-        // Qt's bundled FFmpeg can select an AV1 hardware decoder that produces
-        // green frames on Windows ARM64; that kit has no software AV1 fallback.
-        // Prefer H.264, then VP9, retaining the best available audio and <=1080p.
-        "--format", compatibleFormats, "--merge-output-format", "mkv",
+    startProcess(Operation::Download, tool, downloaderArguments(compatibleFormats, "30") + QStringList{
+        "--newline", "--no-mtime", "--ffmpeg-location", ffmpeg, "--merge-output-format", "mp4",
         "--write-info-json", "--progress-template", "download:PROGRESS:%(progress._percent_str)s",
         "--output", pendingCache_->path() + "/source.%(ext)s", "--", url.trimmed()},
         "Downloading YouTube video to a temporary cache...");
@@ -118,8 +121,8 @@ void MediaJobs::resolve(const QString &url, bool forExport) {
     if (tool.isEmpty()) { fail("yt-dlp was not found. Add it to the tools folder or PATH."); return; }
     ++resolveGeneration_;
     startProcess(forExport ? Operation::ResolveExport : Operation::ResolvePreview, tool,
-        downloaderArguments() + QStringList{"--skip-download", "--dump-single-json",
-        "--socket-timeout", "20", "--retries", "2", "--format", forExport ? compatibleFormats : previewFormats, "--", url.trimmed()},
+        downloaderArguments(forExport ? compatibleFormats : previewFormats, "20") + QStringList{
+            "--skip-download", "--dump-single-json", "--", url.trimmed()},
         forExport ? "Resolving fresh streams for the selected interval..." : "Opening YouTube stream...");
 }
 bool MediaJobs::prepareExport(qint64 start, qint64 end, const QString &destination, ExportMode mode) {
@@ -268,21 +271,21 @@ void MediaJobs::finish(int code, QProcess::ExitStatus status) {
         const auto info = QJsonDocument::fromJson(metadata_, &error).object(); metadata_.clear();
         if (error.error != QJsonParseError::NoError || info.isEmpty()) { fail("Could not read YouTube stream information."); return; }
         if (info.value("is_live").toBool() || info.value("duration").toDouble() <= 0) { fail("Streaming selection requires a finite video with a known duration."); return; }
-        prepareResolved(info, operation_ == Operation::ResolveExport);
+        QJsonArray formats;
+        if (operation_ == Operation::ResolveExport) formats = info.value("requested_formats").toArray();
+        if (formats.isEmpty()) formats.append(info);
+        prepareResolved(info, formats);
         return;
     }
     if (operation_ == Operation::Download) {
-        QDir dir(pendingCache_->path()); QString source;
-        for (const auto &info : dir.entryInfoList(QDir::Files)) {
-            if (QStringList{"mp4", "mkv", "webm", "mov"}.contains(info.suffix()) && !info.completeBaseName().contains('.')) source = info.absoluteFilePath();
-        }
-        if (source.isEmpty()) { fail("The download finished without a playable video file.\n" + log_.right(4000)); return; }
+        const QDir dir(pendingCache_->path());
+        const auto files = dir.entryList({"source.mp4", "source.mkv", "source.webm", "source.mov"}, QDir::Files | QDir::CaseSensitive);
+        if (files.isEmpty()) { fail("The download finished without a playable video file.\n" + log_.right(4000)); return; }
         QFile json(dir.filePath("source.info.json"));
         if (!json.open(QIODevice::ReadOnly)) { fail("Download metadata is missing."); return; }
         auto metadata = QJsonDocument::fromJson(json.readAll()).object();
-        if (cache_) retiredCaches_.push_back(std::move(cache_));
-        cache_ = std::move(pendingCache_);
-        emit downloaded(source, metadata.value("id").toString());
+        downloadCaches_.push_back(std::move(pendingCache_));
+        emit downloaded(dir.absoluteFilePath(files.last()), metadata.value("id").toString());
     } else {
         if (QFileInfo(staging_).size() == 0) { fail("FFmpeg produced an empty file."); return; }
 #ifdef Q_OS_WIN
@@ -294,10 +297,7 @@ void MediaJobs::finish(int code, QProcess::ExitStatus status) {
         staging_.clear(); emit exported(destination_);
     }
 }
-void MediaJobs::prepareResolved(QJsonObject info, bool forExport, int attempt, bool rangeProbe) {
-    auto formats = forExport ? info.value("requested_formats").toArray() : QJsonArray();
-    const bool split = !formats.isEmpty();
-    if (!split) formats.append(info);
+void MediaJobs::prepareResolved(const QJsonObject &info, const QJsonArray &formats, int attempt, bool rangeProbe) {
     for (int index = 0; index < formats.size(); ++index) {
         const auto format = formats[index].toObject(); const QUrl url(format.value("url").toString());
         if (QUrlQuery(url).queryItemValue("clen").toLongLong() > 0 || format.value("filesize").toDouble() > 0) continue;
@@ -313,7 +313,7 @@ void MediaJobs::prepareResolved(QJsonObject info, bool forExport, int attempt, b
         auto *reply = rangeProbe ? probeNetwork_.get(request) : probeNetwork_.head(request);
         probe_ = reply; reply->setReadBufferSize(1024);
         const auto generation = resolveGeneration_;
-        auto complete = [this, reply, info, formats, index, split, forExport, attempt, rangeProbe, generation](bool headersOnly) mutable {
+        auto complete = [this, reply, info, formats, index, attempt, rangeProbe, generation](bool headersOnly) {
             if (generation != resolveGeneration_ || probe_ != reply) return;
             const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
             qint64 size = 0;
@@ -325,37 +325,39 @@ void MediaJobs::prepareResolved(QJsonObject info, bool forExport, int attempt, b
             if (headersOnly) reply->abort();
             reply->deleteLater();
             if (success) {
-                auto format = formats[index].toObject(); format.insert("filesize", double(size)); formats[index] = format;
-                if (split) info.insert("requested_formats", formats); else info = format;
-                prepareResolved(info, forExport); return;
+                auto updatedFormats = formats;
+                auto format = formats[index].toObject();
+                format.insert("filesize", double(size));
+                updatedFormats[index] = format;
+                prepareResolved(info, updatedFormats);
+                return;
             }
-            if (!rangeProbe) { prepareResolved(info, forExport, attempt, true); return; }
+            if (!rangeProbe) { prepareResolved(info, formats, attempt, true); return; }
             if (attempt < 3) {
-                QTimer::singleShot(1500, this, [this, info, forExport, attempt, generation] {
-                    if (generation == resolveGeneration_ && active_) prepareResolved(info, forExport, attempt + 1);
+                QTimer::singleShot(1500, this, [this, info, formats, attempt, generation] {
+                    if (generation == resolveGeneration_ && active_) prepareResolved(info, formats, attempt + 1);
                 });
             } else fail("Could not determine the exact media length from the server. Try Download first.");
         };
-        connect(reply, &QNetworkReply::finished, this, [complete]() mutable { complete(false); });
-        if (rangeProbe) connect(reply, &QNetworkReply::metaDataChanged, this, [complete]() mutable { complete(true); });
+        connect(reply, &QNetworkReply::finished, this, [complete] { complete(false); });
+        if (rangeProbe) connect(reply, &QNetworkReply::metaDataChanged, this, [complete] { complete(true); });
         return;
     }
-    active_ = false; useResolved(info, forExport);
+    active_ = false; useResolved(info, formats);
 }
-void MediaJobs::useResolved(const QJsonObject &info, bool forExport) {
-    if (!forExport) {
-        const QString videoId = info.value("id").toString();
-        const QUrl url = bridge_.add(info, {}, videoId);
+void MediaJobs::useResolved(const QJsonObject &info, const QJsonArray &formats) {
+    const QString videoId = info.value("id").toString();
+    if (operation_ == Operation::ResolvePreview) {
+        const QUrl url = bridge_.add(formats.first().toObject(), {}, videoId);
         if (url.isEmpty()) { fail("No seekable HTTP preview is available. Choose Download first."); return; }
         emit streamReady(url, qRound64(info.value("duration").toDouble() * 1000), info.value("height").toInt(), videoId);
         return;
     }
-    QJsonArray formats = info.value("requested_formats").toArray();
-    if (formats.isEmpty()) formats.append(info);
     if (formats.size() > 2) { fail("Unexpected number of YouTube media streams."); return; }
+    const auto headers = info.value("http_headers").toObject();
     QList<QUrl> sources;
     for (const auto &value : formats) {
-        const auto format = value.toObject(); const QUrl url = bridge_.add(format, info.value("http_headers").toObject(), info.value("id").toString());
+        const QUrl url = bridge_.add(value.toObject(), headers, videoId);
         if (url.isEmpty()) { fail("No seekable video/audio stream is available for this selection. Try Download first."); return; }
         sources.append(url);
     }

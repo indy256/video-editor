@@ -3,6 +3,7 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QPointer>
 #include <QNetworkReply>
@@ -44,8 +45,8 @@ private:
     void finish(int code, QProcess::ExitStatus status);
     void fail(const QString &message);
     void resolve(const QString &url, bool forExport);
-    void prepareResolved(QJsonObject info, bool forExport, int attempt = 0, bool rangeProbe = false);
-    void useResolved(const QJsonObject &info, bool forExport);
+    void prepareResolved(const QJsonObject &info, const QJsonArray &formats, int attempt = 0, bool rangeProbe = false);
+    void useResolved(const QJsonObject &info, const QJsonArray &formats);
     bool prepareExport(qint64 start, qint64 end, const QString &destination, ExportMode mode);
     void startExport(const QUrl &video, const QUrl &audio = {});
     void writeOutput();
@@ -54,8 +55,8 @@ private:
     QNetworkAccessManager probeNetwork_;
     QPointer<QNetworkReply> probe_;
     unsigned resolveGeneration_ = 0;
-    std::unique_ptr<QTemporaryDir> cache_, pendingCache_;
-    std::vector<std::unique_ptr<QTemporaryDir>> retiredCaches_;
+    std::unique_ptr<QTemporaryDir> pendingCache_;
+    std::vector<std::unique_ptr<QTemporaryDir>> downloadCaches_;
     Operation operation_ = Operation::Idle;
     QString destination_, staging_, log_, lines_;
     QByteArray metadata_;
