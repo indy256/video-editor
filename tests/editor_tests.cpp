@@ -330,8 +330,13 @@ private slots:
         auto *in = findControl<QTimeEdit>(window, "Selection start");
         auto *outEdit = findControl<QTimeEdit>(window, "Selection end");
         QVERIFY(in); QVERIFY(outEdit);
+        QVERIFY(in->isReadOnly()); QVERIFY(outEdit->isReadOnly());
         timeline->setSelection(1250, 3500);
         in->setFocus();
+        in->setSelectedSection(QDateTimeEdit::SecondSection);
+        QTest::keyClicks(in, "04");
+        QCOMPARE(timeline->start(), 1250);
+        QCOMPARE(in->text(), QString("00:00:01.250"));
         in->setCurrentSection(QDateTimeEdit::HourSection);
         QTest::keyClick(in, Qt::Key_Up);
         QCOMPARE(timeline->start(), 1283);
@@ -451,7 +456,9 @@ private slots:
         QTest::mouseClick(timeline, Qt::LeftButton, Qt::ShiftModifier, seekPoint);
         QTRY_VERIFY(player->position() > timeline->start() + 1000);
         positions.clear();
-        QTest::keyClick(timeline, Qt::Key_Left);
+        in->setFocus();
+        QVERIFY(in->hasFocus());
+        QTest::keyClick(window.windowHandle(), Qt::Key_Left);
         QTRY_VERIFY(positions.contains(QVariantList{timeline->start()}));
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
 
@@ -478,10 +485,12 @@ private slots:
             checkPauseAndResume([&] { QTest::keyClick(timeline, key); });
         checkPauseAndResume([&] { clickVideo(Qt::LeftButton); });
         const QPair<qint64, qint64> outSeeks[] = {{3500, 2500}, {750, 0}};
+        outEdit->setFocus();
+        QVERIFY(outEdit->hasFocus());
         for (const auto &[out, expected] : outSeeks) {
             timeline->setSelection(500, out);
             positions.clear();
-            QTest::keyClick(timeline, Qt::Key_Right);
+            QTest::keyClick(window.windowHandle(), Qt::Key_Right);
             QTRY_VERIFY(positions.contains(QVariantList{expected}));
             QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
             QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);

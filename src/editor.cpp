@@ -10,6 +10,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMediaMetaData>
@@ -94,6 +95,7 @@ class FrameTimeEdit final : public QTimeEdit {
 public:
     explicit FrameTimeEdit(QMediaPlayer &player) : QTimeEdit(QTime(0, 0)), player_(player) {
         setDisplayFormat("HH:mm:ss.zzz");
+        setReadOnly(true);
         setEnabled(false);
         setToolTip("Up and Down move the marker by one frame");
         connect(&player_, &QMediaPlayer::sourceChanged, this, [this] { preciseTime_ = -1; });
@@ -127,6 +129,20 @@ public:
     }
 
 protected:
+    bool event(QEvent *event) override {
+        if (event->type() == QEvent::ShortcutOverride) {
+            const auto *key = static_cast<QKeyEvent *>(event);
+            const bool horizontalArrow = key->key() == Qt::Key_Left || key->key() == Qt::Key_Right;
+            const auto modifiers = key->modifiers() & ~Qt::KeypadModifier;
+            if (horizontalArrow && modifiers == Qt::NoModifier) {
+                // Let the window shortcuts run before the spin box handles cursor movement.
+                event->ignore();
+                return false;
+            }
+        }
+        return QTimeEdit::event(event);
+    }
+
     void paintEvent(QPaintEvent *event) override {
         QTimeEdit::paintEvent(event);
 
@@ -147,7 +163,7 @@ protected:
     }
 
     StepEnabled stepEnabled() const override {
-        if (isReadOnly() || !player_.hasVideo()) return StepNone;
+        if (!player_.hasVideo()) return StepNone;
         const int current = time().msecsSinceStartOfDay();
         StepEnabled enabled = StepNone;
         if (current < lastMillisecond()) enabled |= StepUpEnabled;
@@ -371,23 +387,21 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     });
     connect(&jobs_, &MediaJobs::failed, this, [this](const QString &message) { setBusy(false); status_->setText("Operation failed. See details."); QMessageBox::warning(this, "Video Editor", message); });
     connect(&jobs_, &MediaJobs::canceled, this, [this] { setBusy(false); status_->setText("Canceled."); });
-    const auto addShortcut = [this](Qt::Key key, auto action) {
-        auto *shortcut = new QShortcut(QKeySequence(key), this, this, [this, key, action] {
-            if (key != Qt::Key_Pause && textFieldHasFocus()) return;
+    const auto addShortcut = [this](Qt::Key key, auto action, bool requiresPlayback = true) {
+        auto *shortcut = new QShortcut(QKeySequence(key), this, this, [this, key, action, requiresPlayback] {
+            if (key != Qt::Key_Pause && url_->hasFocus()) return;
+            if (requiresPlayback && !playbackReady()) return;
             action();
         });
         shortcut->setAutoRepeat(false);
     };
-    const auto addPlaybackShortcut = [this, &addShortcut](Qt::Key key, auto action) {
-        addShortcut(key, [this, action] { if (playbackReady()) action(); });
-    };
-    addPlaybackShortcut(Qt::Key_Space, toggle);
-    addPlaybackShortcut(Qt::Key_Left, playFromIn);
-    addPlaybackShortcut(Qt::Key_Right, [this] {
+    addShortcut(Qt::Key_Space, toggle);
+    addShortcut(Qt::Key_Left, playFromIn);
+    addShortcut(Qt::Key_Right, [this] {
         seekAndPlay(qMax(qint64(0), timeline_->end() - 1000));
     });
-    addPlaybackShortcut(Qt::Key_Pause, toggle);
-    addShortcut(Qt::Key_O, [this] { chooseFile(); });
+    addShortcut(Qt::Key_Pause, toggle);
+    addShortcut(Qt::Key_O, [this] { chooseFile(); }, false);
     local_->setFocus();
     new QShortcut(QKeySequence::Save, this, this, &EditorWindow::saveSelection);
     new QShortcut(QKeySequence(Qt::Key_Escape), this, this, &QWidget::close);
@@ -468,9 +482,6 @@ void EditorWindow::seekAndPlay(qint64 position) {
 }
 bool EditorWindow::playbackReady() const {
     return play_->isEnabled() && !player_->source().isEmpty();
-}
-bool EditorWindow::textFieldHasFocus() const {
-    return url_->hasFocus() || in_->hasFocus() || out_->hasFocus();
 }
 void EditorWindow::chooseFile() {
     if (busy_) return;

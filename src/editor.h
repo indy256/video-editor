@@ -35,7 +35,6 @@ private:
     void applyPendingSeek();
     void seekAndPlay(qint64 position);
     bool playbackReady() const;
-    bool textFieldHasFocus() const;
     MediaJobs jobs_;
     QMediaPlayer *player_;
     QWidget *previewArea_;
