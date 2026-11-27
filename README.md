@@ -51,6 +51,8 @@ The app searches `tools` beside its executable, its executable directory, then P
 
 Windows downloads are single portable executables that extract their runtime to a per-user cache on first launch. macOS downloads contain `VideoEditor.app`; Linux downloads are executable AppImages. Each includes Qt's multimedia backend, FFmpeg, yt-dlp and Deno. Windows ARM64 uses an x64 FFmpeg CLI under emulation and native ARM64 libraries for playback. Helper downloads are verified against upstream SHA-256 digests; FFmpeg build notes and licensing are included in the package.
 
+Right-click the editor and choose **Update to latest version**. The updater downloads the matching GitHub release, verifies its size and SHA-256 checksum, replaces the app, and reopens the current video at its previous position. You can cancel before installation. The app must be in a writable folder. Windows replaces the portable launcher or upgrades a local build to the portable release. On Linux, run the AppImage. On macOS, run the installed `VideoEditor.app`.
+
 CI rebuilds Qt from checksum-verified sources with LTO, caches it by Qt version and compiler identity, and checks the LTO manifest before building the editor. Release application and portable launcher builds also use LTO and size optimizations. Failed test logs are retained as artifacts. Packaged applications must re-encode a short clip and decode its first frame with system-only PATH settings before upload. Pushing a `vX.Y.Z` tag publishes all four packages as a GitHub release after every build succeeds.
 
 For a local CMake build on any supported platform, use a Qt kit with Widgets, Multimedia, MultimediaWidgets and Network, plus Test when running tests. Set up a native compiler and Ninja on PATH, then run:

@@ -24,14 +24,19 @@ if(VIDEO_EDITOR_REQUIRE_QT_LTO)
     endif()
   endforeach()
 endif()
-add_library(editor_core src/timeline.cpp src/jobs.cpp src/editor.cpp src/rangebridge.cpp src/chunkcache.cpp)
+add_library(editor_core src/timeline.cpp src/jobs.cpp src/editor.cpp src/rangebridge.cpp src/chunkcache.cpp src/updater.cpp)
 target_include_directories(editor_core PUBLIC src)
 target_link_libraries(editor_core PUBLIC Qt6::Widgets Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Network)
+qt_add_resources(editor_core updater
+  PREFIX "/updates"
+  BASE "${CMAKE_CURRENT_SOURCE_DIR}/packaging"
+  FILES packaging/update-windows.ps1 packaging/update-unix.sh)
 if(MSVC)
   target_compile_options(editor_core PUBLIC /utf-8)
 endif()
 qt_add_executable(VideoEditor WIN32 MACOSX_BUNDLE src/main.cpp)
 target_link_libraries(VideoEditor PRIVATE editor_core)
+target_compile_definitions(VideoEditor PRIVATE VIDEO_EDITOR_VERSION="${VIDEO_EDITOR_VERSION}")
 qt_add_resources(VideoEditor app_icon
   PREFIX "/"
   BASE "${CMAKE_CURRENT_SOURCE_DIR}/packaging"
@@ -98,4 +103,11 @@ if(BUILD_TESTING)
     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunEditorTests.cmake")
   set_tests_properties(editor_tests PROPERTIES TIMEOUT 300
     ENVIRONMENT "QT_MEDIA_BACKEND=ffmpeg;QT_QPA_PLATFORM=offscreen")
+  qt_add_executable(updater_tests tests/updater_tests.cpp)
+  target_link_libraries(updater_tests PRIVATE editor_core Qt6::Test)
+  add_test(NAME updater_tests COMMAND updater_tests)
+  if(UNIX)
+    add_test(NAME update_unix COMMAND /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/update-unix.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/update-unix.sh")
+  endif()
 endif()

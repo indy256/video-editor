@@ -1,6 +1,5 @@
 #include "editor.h"
 #include <QApplication>
-#include <QDir>
 #include <QFileInfo>
 #include <QIcon>
 #include <QMediaPlayer>
@@ -38,13 +37,16 @@ int main(int argc, char **argv) {
     qputenv("QT_MEDIA_BACKEND", "ffmpeg");
     QApplication app(argc, argv);
     app.setApplicationName("VideoEditor"); app.setOrganizationName("VideoEditor");
+    app.setApplicationVersion(QStringLiteral(VIDEO_EDITOR_VERSION));
     const auto arguments = app.arguments();
     if (arguments.value(1) == "--runtime-check") return checkRuntime(app, arguments.value(2));
     app.setWindowIcon(QIcon(":/video-editor.png"));
     EditorWindow window; window.show();
-    if (argc > 1) {
-        const auto input = QString::fromLocal8Bit(argv[1]);
-        if (isYouTubeUrl(input)) window.openYouTubeUrl(input); else window.openFile(QDir::cleanPath(input));
-    }
+    const QString source = arguments.value(1);
+    const bool resuming = arguments.value(2) == "--resume-after-update";
+    bool positionValid = false;
+    const auto position = arguments.value(3).toLongLong(&positionValid);
+    if (!source.isEmpty() && (!resuming || positionValid))
+        window.openSource(source, resuming ? std::optional{position} : std::nullopt);
     return app.exec();
 }

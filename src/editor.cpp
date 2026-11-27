@@ -1,5 +1,6 @@
 #include "editor.h"
 #include "timeline.h"
+#include "updater.h"
 #include <QApplication>
 #include <QAudioOutput>
 #include <QCloseEvent>
@@ -15,6 +16,7 @@
 #include <QLineEdit>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -38,6 +40,7 @@
 #include <QStackedLayout>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 constexpr int seekSliderMaximum = 1'000'000;
@@ -374,19 +377,26 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     connect(&jobs_, &MediaJobs::downloaded, this, [this](const QString &path, const QString &videoId) {
         setBusy(false);
         youtubePage_.clear();
-        openMedia(QUrl::fromLocalFile(path), youtubeSelectionKey(videoId, url_->text()));
+        const QString page = url_->text().trimmed();
+        openMedia(QUrl::fromLocalFile(path), youtubeSelectionKey(videoId, page), page);
     });
     connect(&jobs_, &MediaJobs::streamReady, this, [this](const QUrl &url, qint64 duration, int height, const QString &videoId) {
         setBusy(false); youtubePage_ = url_->text().trimmed();
-        openMedia(url, youtubeSelectionKey(videoId, youtubePage_), duration);
+        openMedia(url, youtubeSelectionKey(videoId, youtubePage_), youtubePage_, duration);
         status_->setText(QString("Streaming preview: %1p. Seek anywhere; Save selection fetches the interval at up to 1080p.").arg(height));
     });
     connect(&jobs_, &MediaJobs::exported, this, [this](const QString &path) {
         setBusy(false);
         status_->setText("Saved: " + QDir::toNativeSeparators(path) + (jobs_.copiesOriginalStreams() ? " | Original streams; starts at " + timeText(jobs_.actualExportStart()) : ""));
     });
-    connect(&jobs_, &MediaJobs::failed, this, [this](const QString &message) { setBusy(false); status_->setText("Operation failed. See details."); QMessageBox::warning(this, "Video Editor", message); });
-    connect(&jobs_, &MediaJobs::canceled, this, [this] { setBusy(false); status_->setText("Canceled."); });
+    connect(&jobs_, &MediaJobs::failed, this, [this](const QString &message) {
+        reopenPosition_.reset();
+        setBusy(false); status_->setText("Operation failed. See details."); QMessageBox::warning(this, "Video Editor", message);
+    });
+    connect(&jobs_, &MediaJobs::canceled, this, [this] {
+        reopenPosition_.reset();
+        setBusy(false); status_->setText("Canceled.");
+    });
     const auto addShortcut = [this](Qt::Key key, auto action, bool requiresPlayback = true) {
         auto *shortcut = new QShortcut(QKeySequence(key), this, this, [this, key, action, requiresPlayback] {
             if (key != Qt::Key_Pause && url_->hasFocus()) return;
@@ -405,6 +415,12 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
     local_->setFocus();
     new QShortcut(QKeySequence::Save, this, this, &EditorWindow::saveSelection);
     new QShortcut(QKeySequence(Qt::Key_Escape), this, this, &QWidget::close);
+    setContextMenuPolicy(Qt::CustomContextMenu);
+    auto *menu = new QMenu(this);
+    menu->addAction("Update to latest version", this, &EditorWindow::updateToLatest);
+    connect(this, &QWidget::customContextMenuRequested, menu, [this, menu](const QPoint &point) {
+        menu->popup(mapToGlobal(point));
+    });
     refreshSelection();
     if (!restoreGeometry(settings.value(windowGeometryKey).toByteArray())
         && restoreGeometry(settings.value("window/geometry").toByteArray())
@@ -501,23 +517,30 @@ void EditorWindow::chooseFile() {
 void EditorWindow::openFile(const QString &path) {
     if (busy_) return;
     const QFileInfo file(path);
-    if (!file.isFile()) { status_->setText("File does not exist: " + path); return; }
+    if (!file.isFile()) {
+        reopenPosition_.reset();
+        status_->setText("File does not exist: " + path);
+        return;
+    }
     youtubePage_.clear();
     const QString absolutePath = file.absoluteFilePath();
     const QString canonicalPath = file.canonicalFilePath();
     const auto key = selectionSettingsKey("file", canonicalPath.isEmpty() ? absolutePath : canonicalPath);
-    openMedia(QUrl::fromLocalFile(absolutePath), key);
+    openMedia(QUrl::fromLocalFile(absolutePath), key, absolutePath);
 }
-void EditorWindow::openMedia(const QUrl &source, const QString &selectionKey, qint64 duration) {
+void EditorWindow::openMedia(const QUrl &source, const QString &selectionKey, const QString &reopenSource, qint64 duration) {
     if (source == player_->source() && player_->duration() > 0) duration = player_->duration();
     timeline_->cancelDrag();
     seek_->setSliderDown(false);
     pendingSeek_.reset();
     player_->stop();
+    reopenSource_ = reopenSource;
     selectionKey_ = selectionKey;
     updateMediaDuration(duration);
     status_->setText("Click the track or drag a handle to set IN and OUT. Choose an export mode and Save selection.");
+    pendingSeek_ = std::exchange(reopenPosition_, std::nullopt);
     player_->setSource(source); player_->pause();
+    applyPendingSeek();
     updateSelectionActions();
 }
 void EditorWindow::updateMediaDuration(qint64 duration) {
@@ -545,7 +568,28 @@ void EditorWindow::openYouTube() {
     player_->pause();
     if (loadMode_->currentIndex() == 0) jobs_.resolveStream(url_->text()); else jobs_.download(url_->text());
 }
-void EditorWindow::openYouTubeUrl(const QString &url) { if (!busy_) { url_->setText(url); openYouTube(); } }
+void EditorWindow::openSource(const QString &source, std::optional<qint64> position) {
+    if (busy_) return;
+    if (position) *position = qMax(qint64(0), *position);
+    reopenPosition_ = position;
+    if (isYouTubeUrl(source)) {
+        url_->setText(source);
+        openYouTube();
+    } else {
+        openFile(QDir::cleanPath(source));
+    }
+}
+void EditorWindow::updateToLatest() {
+    if (updating_) return;
+    if (jobs_.busy()) {
+        QMessageBox::information(this, "Update to latest version", "Finish or cancel the current operation before updating.");
+        return;
+    }
+    const QScopedValueRollback guard(updating_, true);
+    const QStringList arguments = reopenSource_.isEmpty() ? QStringList{} :
+        QStringList{reopenSource_, "--resume-after-update", QString::number(player_->position())};
+    if (AppUpdate::installLatest(this, arguments)) close();
+}
 void EditorWindow::refreshSelection() {
     const qint64 start = timeline_->start(), end = timeline_->end();
     const QSignalBlocker blockIn(in_), blockOut(out_);

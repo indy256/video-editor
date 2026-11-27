@@ -4,6 +4,7 @@
 #include <QtTest>
 #include <QAudioOutput>
 #include <QMediaPlayer>
+#include <QMenu>
 #include <QVideoSink>
 #include <QVideoFrame>
 #include <QTemporaryDir>
@@ -13,6 +14,7 @@
 #include <QJsonObject>
 #include <QPushButton>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QSettings>
@@ -458,6 +460,15 @@ private slots:
             QTest::mouseClick(window.windowHandle(), button, Qt::NoModifier, videoPoint);
         };
         clickVideo(Qt::RightButton);
+        if (!QApplication::activePopupWidget()) {
+            QContextMenuEvent contextMenu(QContextMenuEvent::Mouse, video->mapFrom(&window, videoPoint),
+                                         window.mapToGlobal(videoPoint));
+            QApplication::sendEvent(video, &contextMenu);
+        }
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        QVERIFY(menu);
+        QCOMPARE(menu->actions().first()->text(), QString("Update to latest version"));
+        menu->close();
         QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
 
         const QPoint seekPoint(timeline->width() * 3 / 5, 40);
@@ -719,13 +730,14 @@ private slots:
         auto *out = findControl<QTimeEdit>(restored, "Selection end");
         auto *player = restored.findChild<QMediaPlayer *>();
         QVERIFY(timeline); QVERIFY(in); QVERIFY(out); QVERIFY(player);
-        restored.openFile(firstPath);
+        restored.openSource(firstPath, 2250);
         QTRY_COMPARE(timeline->start(), 1250);
         QCOMPARE(timeline->end(), 3750);
         QCOMPARE(in->time().msecsSinceStartOfDay(), 1250);
         QCOMPARE(out->time().msecsSinceStartOfDay(), 3750);
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
-        QCOMPARE(player->position(), 0);
+        QTRY_COMPARE(player->position(), 2250);
+        QTRY_VERIFY(qAbs(player->videoSink()->videoFrame().startTime() - 2250000) <= 34000);
         restored.openFile(secondPath);
         QTRY_COMPARE(timeline->start(), 500);
         QCOMPARE(timeline->end(), 3000);

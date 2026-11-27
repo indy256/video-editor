@@ -17,14 +17,15 @@ class EditorWindow : public QMainWindow {
 public:
     explicit EditorWindow(QWidget *parent = nullptr);
     void openFile(const QString &path);
-    void openYouTubeUrl(const QString &url);
+    void openSource(const QString &source, std::optional<qint64> position = std::nullopt);
 protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
     bool isWindowBackground(const QPoint &point) const;
     void openYouTube();
-    void openMedia(const QUrl &source, const QString &selectionKey, qint64 duration = 0);
+    void openMedia(const QUrl &source, const QString &selectionKey, const QString &reopenSource, qint64 duration = 0);
+    void updateToLatest();
     void updateMediaDuration(qint64 duration);
     void chooseFile();
     void saveSelection();
@@ -47,7 +48,7 @@ private:
     QProgressBar *progress_;
     QSlider *seek_, *volume_;
     QTimeEdit *in_, *out_;
-    QString youtubePage_, selectionKey_;
+    QString youtubePage_, selectionKey_, reopenSource_;
     struct WindowDrag {
         QObject *surface = nullptr;
         QPoint pressPosition;
@@ -56,6 +57,8 @@ private:
     };
     WindowDrag windowDrag_;
     std::optional<qint64> pendingSeek_;
+    std::optional<qint64> reopenPosition_;
     bool seeking_ = false;
     bool busy_ = false;
+    bool updating_ = false;
 };
