@@ -456,21 +456,6 @@ private slots:
         dragWindow(play->mapTo(&window, play->rect().center()));
         QCOMPARE(window.pos(), originalPosition);
 
-        const auto clickVideo = [&](Qt::MouseButton button) {
-            QTest::mouseClick(window.windowHandle(), button, Qt::NoModifier, videoPoint);
-        };
-        clickVideo(Qt::RightButton);
-        if (!QApplication::activePopupWidget()) {
-            QContextMenuEvent contextMenu(QContextMenuEvent::Mouse, video->mapFrom(&window, videoPoint),
-                                         window.mapToGlobal(videoPoint));
-            QApplication::sendEvent(video, &contextMenu);
-        }
-        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
-        QVERIFY(menu);
-        QCOMPARE(menu->actions().first()->text(), QString("Update to latest version"));
-        menu->close();
-        QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
-
         const QPoint seekPoint(timeline->width() * 3 / 5, 40);
         QSignalSpy positions(player, &QMediaPlayer::positionChanged);
         QTest::mouseClick(timeline, Qt::LeftButton, Qt::ShiftModifier, seekPoint);
@@ -503,7 +488,9 @@ private slots:
         };
         for (auto key : {Qt::Key_Space, Qt::Key_Pause})
             checkPauseAndResume([&] { QTest::keyClick(timeline, key); });
-        checkPauseAndResume([&] { clickVideo(Qt::LeftButton); });
+        checkPauseAndResume([&] {
+            QTest::mouseClick(window.windowHandle(), Qt::LeftButton, Qt::NoModifier, videoPoint);
+        });
         const QPair<qint64, qint64> outSeeks[] = {{3500, 2500}, {750, 0}};
         outEdit->setFocus();
         QVERIFY(outEdit->hasFocus());
@@ -1020,6 +1007,29 @@ private slots:
         QNetworkAccessManager client; auto *reply = client.head(QNetworkRequest(ready.first().first().toUrl())); QSignalSpy done(reply, &QNetworkReply::finished);
         QTRY_VERIFY_WITH_TIMEOUT(!done.isEmpty(), 5000); QCOMPARE(reply->error(), QNetworkReply::NoError);
         QCOMPARE(reply->rawHeader("Content-Length").toLongLong(), exactSize); reply->deleteLater();
+    }
+    void updateContextMenu() {
+        EditorWindow window;
+        window.show();
+        auto *video = window.findChild<QVideoWidget *>();
+        auto *player = window.findChild<QMediaPlayer *>();
+        QVERIFY(video); QVERIFY(player);
+        window.openFile(source);
+        QTRY_VERIFY(video->videoSink()->videoFrame().isValid());
+        QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+
+        const QPoint videoPoint = video->rect().center();
+        QTest::mouseClick(window.windowHandle(), Qt::RightButton, Qt::NoModifier, video->mapTo(&window, videoPoint));
+        if (!QApplication::activePopupWidget()) {
+            QContextMenuEvent contextMenu(QContextMenuEvent::Mouse, videoPoint, video->mapToGlobal(videoPoint));
+            QApplication::sendEvent(video, &contextMenu);
+        }
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        QVERIFY(menu);
+        QVERIFY(!menu->actions().isEmpty());
+        QCOMPARE(menu->actions().first()->text(), QString("Update to latest version"));
+        menu->close();
+        QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
     }
     void cleanupTestCase() {
         if (previousCacheDirectory.isNull()) qunsetenv("VIDEO_EDITOR_CACHE_DIR"); else qputenv("VIDEO_EDITOR_CACHE_DIR", previousCacheDirectory);
