@@ -48,12 +48,16 @@ void Timeline::setSelection(qint64 start, qint64 end) {
     end_ = std::clamp(end, qint64(0), duration_);
     emit selectionChanged(start_, end_); update();
 }
-int Timeline::trackWidth() const { return width() - 2 * trackInset; }
+QRectF Timeline::trackRect() const {
+    return {trackInset, trackTop, qreal(width() - 2 * trackInset), trackHeight};
+}
 qreal Timeline::xAt(qint64 value) const {
-    return trackInset + (duration_ ? qreal(value) / duration_ * trackWidth() : 0);
+    const QRectF track = trackRect();
+    return track.left() + (duration_ ? qreal(value) / duration_ * track.width() : 0);
 }
 qint64 Timeline::at(qreal x) const {
-    return qRound64(std::clamp((x - trackInset) / trackWidth(), qreal(0), qreal(1)) * duration_);
+    const QRectF track = trackRect();
+    return qRound64(std::clamp((x - track.left()) / track.width(), qreal(0), qreal(1)) * duration_);
 }
 QRect Timeline::handleRect(DragTarget marker, qreal x) const {
     const int left = std::clamp(qRound(x) - handleWidth / 2, 0, width() - handleWidth);
@@ -62,10 +66,11 @@ QRect Timeline::handleRect(DragTarget marker, qreal x) const {
 }
 void Timeline::paintEvent(QPaintEvent *) {
     QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
-    const int trackPixels = trackWidth();
+    const QRectF track = trackRect();
+    const int trackPixels = int(track.width());
     const qreal inX = xAt(start_), outX = xAt(end_);
     p.setPen(Qt::NoPen); p.setBrush(QColor("#292f3d"));
-    p.drawRoundedRect(QRectF(trackInset, trackTop, trackPixels, trackHeight), 5, 5);
+    p.drawRoundedRect(track, 5, 5);
     if (end_ > start_) {
         p.setBrush(QColor("#245b57"));
         p.drawRect(QRectF(inX, trackTop, outX - inX, trackHeight));
@@ -73,7 +78,7 @@ void Timeline::paintEvent(QPaintEvent *) {
     p.setPen(QColor("#677083"));
     const int ticks = std::clamp(trackPixels / 105, 2, 8);
     for (int i = 0; i <= ticks; ++i) {
-        int x = trackInset + trackPixels * i / ticks;
+        const int x = int(track.left()) + trackPixels * i / ticks;
         p.drawLine(x, tickTop, x, tickBottom);
         qint64 value = duration_ * i / ticks;
         const auto label = duration_ < 60000 ? QString::number(value / 1000.0, 'f', 1) + "s" : timeText(value).left(8);
@@ -99,7 +104,6 @@ void Timeline::paintEvent(QPaintEvent *) {
     p.drawLine(QLineF(playhead, trackTop + 2, playhead, trackBottom - 2));
 }
 void Timeline::updateDrag(qreal x) {
-    if (dragTarget_ == DragTarget::None) return;
     const qint64 position = at(x - dragOffset_);
     if (position == lastDragPosition_) return;
     lastDragPosition_ = position;
@@ -117,7 +121,7 @@ void Timeline::mousePressEvent(QMouseEvent *event) {
     lastDragPosition_ = -1;
     if (event->modifiers() & Qt::ShiftModifier) {
         dragTarget_ = DragTarget::Seek;
-    } else if (point.y() >= trackTop && point.y() <= trackBottom) {
+    } else if (trackRect().contains(point)) {
         const qreal toIn = qAbs(point.x() - xAt(start_));
         const qreal toOut = qAbs(point.x() - xAt(end_));
         const bool favorIn = toIn == toOut ? point.y() < trackTop + trackHeight / 2 : toIn < toOut;
@@ -135,15 +139,19 @@ void Timeline::mousePressEvent(QMouseEvent *event) {
                 break;
             }
         }
+        if (dragTarget_ == DragTarget::None) event->ignore();
         return;
     }
     updateDrag(point.x());
 }
 void Timeline::mouseMoveEvent(QMouseEvent *event) {
-    if (event->buttons() & Qt::LeftButton) updateDrag(event->position().x());
+    if (dragTarget_ != DragTarget::None && event->buttons().testFlag(Qt::LeftButton))
+        updateDrag(event->position().x());
+    else
+        event->ignore();
 }
 void Timeline::mouseReleaseEvent(QMouseEvent *event) {
-    if (event->button() != Qt::LeftButton) {
+    if (dragTarget_ == DragTarget::None || event->button() != Qt::LeftButton) {
         event->ignore();
         return;
     }

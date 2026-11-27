@@ -26,7 +26,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *) override;
 private:
     enum class DragTarget { None, In, Out, Seek };
-    int trackWidth() const;
+    QRectF trackRect() const;
     qint64 at(qreal x) const;
     qreal xAt(qint64 value) const;
     QRect handleRect(DragTarget marker, qreal x) const;

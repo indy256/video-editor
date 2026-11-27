@@ -412,6 +412,18 @@ EditorWindow::EditorWindow(QWidget *parent) : QMainWindow(parent), jobs_(this) {
         resize(width(), qRound(height() * windowHeightScale));
     }
 }
+bool EditorWindow::isWindowBackground(const QPoint &point) const {
+    const auto *root = centralWidget();
+    const auto *child = root->childAt(point);
+    // The timeline passes unhandled presses up to the central widget.
+    if (!child || child == timeline_) return true;
+
+    const auto *label = qobject_cast<const QLabel *>(child);
+    if (!label) return false;
+    const int flags = int(label->alignment()) | (label->wordWrap() ? Qt::TextWordWrap : Qt::TextSingleLine);
+    const QRect textBounds = label->fontMetrics().boundingRect(label->contentsRect(), flags, label->text());
+    return !textBounds.contains(label->mapFrom(root, point));
+}
 bool EditorWindow::eventFilter(QObject *watched, QEvent *event) {
     switch (event->type()) {
     case QEvent::Wheel:
@@ -421,10 +433,8 @@ bool EditorWindow::eventFilter(QObject *watched, QEvent *event) {
     case QEvent::MouseButtonPress:
     case QEvent::MouseButtonDblClick: {
         const auto *mouse = static_cast<QMouseEvent *>(event);
-        if (mouse->button() != Qt::LeftButton ||
-            (watched == centralWidget() && centralWidget()->childAt(mouse->position().toPoint()))) {
-            break;
-        }
+        if (mouse->button() != Qt::LeftButton) break;
+        if (watched == centralWidget() && !isWindowBackground(mouse->position().toPoint())) break;
         windowDrag_ = {watched, mouse->globalPosition().toPoint(), pos()};
         return true;
     }

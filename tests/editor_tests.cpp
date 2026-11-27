@@ -427,6 +427,8 @@ private slots:
         auto screenshot = qEnvironmentVariable("VIDEO_EDITOR_SCREENSHOT");
         if (!screenshot.isEmpty()) { QTest::qWait(500); QVERIFY(window.grab().save(screenshot)); }
         player->audioOutput()->setMuted(true);
+        // Leave room inside the stretched label even with wider fallback fonts.
+        window.resize(qMax(normalSize.width(), window.sizeHint().width() + 100), normalSize.height());
         const QPoint videoPoint = video->mapTo(&window, video->rect().center());
         const QPoint dragDistance(60, 40);
         const auto dragWindow = [&](const QPoint &from) {
@@ -436,14 +438,21 @@ private slots:
             QTest::mouseRelease(window.windowHandle(), Qt::LeftButton, Qt::NoModifier, window.mapFromGlobal(destination));
         };
         const QPoint originalPosition = window.pos();
-        dragWindow(window.centralWidget()->mapTo(&window, QPoint(4, 4)));
-        QCOMPARE(window.pos(), originalPosition + dragDistance);
-        dragWindow(videoPoint);
-        QCOMPARE(window.pos(), originalPosition + 2 * dragDistance);
+        const QPoint backgroundPoints[] = {
+            window.centralWidget()->mapTo(&window, QPoint(4, 4)),
+            summary->mapTo(&window, QPoint(summary->width() - 2, summary->height() / 2)),
+            timeline->mapTo(&window, QPoint(timeline->width() / 2, 12)),
+            videoPoint,
+        };
+        for (const QPoint &point : backgroundPoints) {
+            dragWindow(point);
+            QVERIFY2(window.pos() == originalPosition + dragDistance,
+                     qPrintable(QString("Window drag at (%1, %2)").arg(point.x()).arg(point.y())));
+            window.move(originalPosition);
+        }
         QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
         dragWindow(play->mapTo(&window, play->rect().center()));
-        QCOMPARE(window.pos(), originalPosition + 2 * dragDistance);
-        window.move(originalPosition);
+        QCOMPARE(window.pos(), originalPosition);
 
         const auto clickVideo = [&](Qt::MouseButton button) {
             QTest::mouseClick(window.windowHandle(), button, Qt::NoModifier, videoPoint);

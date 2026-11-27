@@ -22,6 +22,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
+    bool isWindowBackground(const QPoint &point) const;
     void openYouTube();
     void openMedia(const QUrl &source, const QString &selectionKey, qint64 duration = 0);
     void updateMediaDuration(qint64 duration);
